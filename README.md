@@ -15,6 +15,15 @@ The repository currently contains the first development environment setup:
 - `artifacts/`: generated deliverables
 - `tmps/`: temporary files
 
+The frontend home screen includes a dark violet stock dashboard prototype with:
+
+- Domestic and overseas market tabs
+- English and Korean language selection
+- Stock search over sample symbols
+- Watchlist add/remove behavior
+- Interactive SVG price chart with range tabs and hover state
+- Portfolio signal and research note preview panels
+
 ## Planned Features
 
 - Brokerage account integration

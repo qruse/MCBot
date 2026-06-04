@@ -3,9 +3,9 @@
   grid-template-columns: 248px minmax(0, 1fr);
   min-height: 100vh;
   background:
-    radial-gradient(circle at top left, rgba(139, 92, 246, 0.28), transparent 34%),
-    linear-gradient(135deg, #0d0718 0%, #171026 44%, #211536 100%);
-  color: #f7f3ff;
+    radial-gradient(circle at top left, rgba(14, 165, 233, 0.18), transparent 34%),
+    linear-gradient(135deg, #07111f 0%, #0b1728 46%, #0f2034 100%);
+  color: #e6edf7;
   font-family: var(--font-sans);
 }
 
@@ -13,8 +13,8 @@
   display: flex;
   min-height: 100vh;
   flex-direction: column;
-  border-right: 1px solid rgba(196, 181, 253, 0.14);
-  background: rgba(15, 10, 28, 0.9);
+  border-right: 1px solid rgba(125, 211, 252, 0.13);
+  background: rgba(6, 15, 28, 0.92);
   padding: 24px 18px;
 }
 
@@ -25,7 +25,7 @@
 }
 
 .brandBlock strong {
-  color: #a78bfa;
+  color: #38bdf8;
   font-size: 30px;
   line-height: 1;
 }
@@ -40,7 +40,7 @@
 .watchRow small,
 .languageSelect span,
 .marketStatus span {
-  color: #ada4c8;
+  color: #9fb2ca;
   font-size: 13px;
   font-weight: 700;
   line-height: 1.35;
@@ -60,7 +60,7 @@
   border: 1px solid transparent;
   border-radius: 8px;
   padding: 0 12px;
-  color: #d8cff7;
+  color: #c8d5e6;
   background: transparent;
   font-size: 14px;
   font-weight: 750;
@@ -68,8 +68,8 @@
 }
 
 .navItemActive {
-  border-color: rgba(167, 139, 250, 0.36);
-  background: rgba(124, 58, 237, 0.24);
+  border-color: rgba(56, 189, 248, 0.35);
+  background: rgba(14, 165, 233, 0.18);
   color: #ffffff;
 }
 
@@ -77,14 +77,14 @@
   display: grid;
   gap: 7px;
   margin-top: auto;
-  border: 1px solid rgba(167, 139, 250, 0.24);
+  border: 1px solid rgba(56, 189, 248, 0.22);
   border-radius: 8px;
-  background: rgba(26, 18, 45, 0.86);
+  background: rgba(10, 25, 43, 0.88);
   padding: 16px;
 }
 
 .brokerBox span {
-  color: #a8a0bd;
+  color: #8ea4bf;
   font-size: 12px;
   font-weight: 800;
 }
@@ -104,7 +104,7 @@
   display: grid;
   gap: 5px;
   margin-top: 10px;
-  border-top: 1px solid rgba(196, 181, 253, 0.14);
+  border-top: 1px solid rgba(125, 211, 252, 0.13);
   padding-top: 12px;
 }
 
@@ -142,10 +142,10 @@
 
 .languageSelect select {
   height: 40px;
-  border: 1px solid rgba(167, 139, 250, 0.32);
+  border: 1px solid rgba(56, 189, 248, 0.26);
   border-radius: 8px;
-  background: #171026;
-  color: #f7f3ff;
+  background: #0b1728;
+  color: #e6edf7;
   font: inherit;
   font-size: 14px;
   font-weight: 750;
@@ -158,10 +158,10 @@
   height: 42px;
   align-items: center;
   justify-content: center;
-  border: 1px solid rgba(167, 139, 250, 0.28);
+  border: 1px solid rgba(56, 189, 248, 0.24);
   border-radius: 8px;
-  background: rgba(27, 18, 47, 0.88);
-  color: #e9ddff;
+  background: rgba(10, 25, 43, 0.9);
+  color: #d8e9f8;
   cursor: pointer;
 }
 
@@ -171,32 +171,34 @@
   gap: 12px;
   align-items: center;
   margin-bottom: 18px;
-  border: 1px solid rgba(167, 139, 250, 0.2);
+  border: 1px solid rgba(56, 189, 248, 0.18);
   border-radius: 8px;
-  background: rgba(26, 18, 45, 0.78);
+  background: rgba(10, 25, 43, 0.82);
   padding: 14px;
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.2);
 }
 
 .marketTabs,
-.rangeTabs {
+.rangeTabs,
+.chartTypeTabs {
   display: inline-grid;
   grid-auto-flow: column;
   gap: 6px;
-  border: 1px solid rgba(167, 139, 250, 0.22);
+  border: 1px solid rgba(56, 189, 248, 0.18);
   border-radius: 8px;
-  background: rgba(10, 7, 22, 0.54);
+  background: rgba(5, 12, 24, 0.58);
   padding: 4px;
 }
 
 .marketTab,
 .marketTabActive,
-.rangeTabs button {
+.rangeTabs button,
+.chartTypeTabs button {
   min-height: 36px;
   border: 0;
   border-radius: 7px;
   background: transparent;
-  color: #bdb4d7;
+  color: #9fb2ca;
   font-size: 13px;
   font-weight: 850;
   cursor: pointer;
@@ -209,10 +211,11 @@
 }
 
 .marketTabActive,
-.rangeTabs .rangeActive {
-  background: linear-gradient(135deg, #7c3aed, #4f46e5);
+.rangeTabs .rangeActive,
+.chartTypeTabs .rangeActive {
+  background: linear-gradient(135deg, #0ea5e9, #0f766e);
   color: #ffffff;
-  box-shadow: 0 12px 26px rgba(124, 58, 237, 0.28);
+  box-shadow: 0 12px 26px rgba(14, 165, 233, 0.2);
 }
 
 .searchBox {
@@ -221,11 +224,11 @@
   gap: 10px;
   align-items: center;
   min-height: 44px;
-  border: 1px solid rgba(167, 139, 250, 0.26);
+  border: 1px solid rgba(56, 189, 248, 0.22);
   border-radius: 8px;
-  background: rgba(12, 8, 24, 0.66);
+  background: rgba(5, 12, 24, 0.66);
   padding: 0 14px;
-  color: #a78bfa;
+  color: #38bdf8;
 }
 
 .searchBox input {
@@ -239,7 +242,7 @@
 }
 
 .searchBox input::placeholder {
-  color: #887fa4;
+  color: #6f839d;
 }
 
 .searchBox button {
@@ -248,7 +251,7 @@
   justify-content: center;
   border: 0;
   background: transparent;
-  color: #bdb4d7;
+  color: #9fb2ca;
   cursor: pointer;
 }
 
@@ -286,9 +289,9 @@
 .watchPanel,
 .signalPanel,
 .researchPanel {
-  border: 1px solid rgba(167, 139, 250, 0.2);
+  border: 1px solid rgba(56, 189, 248, 0.17);
   border-radius: 8px;
-  background: rgba(27, 18, 47, 0.86);
+  background: rgba(10, 25, 43, 0.9);
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.18);
 }
 
@@ -321,7 +324,7 @@
 }
 
 .panelHeader a {
-  color: #a78bfa;
+  color: #38bdf8;
   font-size: 13px;
   font-weight: 850;
 }
@@ -342,7 +345,7 @@
   gap: 12px;
   border: 1px solid transparent;
   border-radius: 8px;
-  background: rgba(15, 10, 28, 0.62);
+  background: rgba(5, 12, 24, 0.6);
   padding: 13px;
   color: #ffffff;
   text-align: left;
@@ -350,8 +353,8 @@
 }
 
 .stockRowSelected {
-  border-color: rgba(167, 139, 250, 0.58);
-  background: rgba(124, 58, 237, 0.18);
+  border-color: rgba(56, 189, 248, 0.5);
+  background: rgba(14, 165, 233, 0.12);
 }
 
 .stockRow strong,
@@ -392,7 +395,7 @@
 }
 
 .chartHeader h2 small {
-  color: #ada4c8;
+  color: #9fb2ca;
   font-size: 15px;
   font-weight: 750;
 }
@@ -412,8 +415,8 @@
 }
 
 .watchButton {
-  border: 1px solid #8b5cf6;
-  background: linear-gradient(135deg, #8b5cf6, #5b5bd6);
+  border: 1px solid #0ea5e9;
+  background: linear-gradient(135deg, #0ea5e9, #075985);
   color: #ffffff;
 }
 
@@ -431,9 +434,9 @@
 }
 
 .quoteStrip div {
-  border: 1px solid rgba(167, 139, 250, 0.18);
+  border: 1px solid rgba(56, 189, 248, 0.16);
   border-radius: 8px;
-  background: rgba(12, 8, 24, 0.52);
+  background: rgba(5, 12, 24, 0.52);
   padding: 14px;
 }
 
@@ -446,19 +449,32 @@
   line-height: 1.25;
 }
 
-.rangeTabs {
-  grid-template-columns: repeat(4, minmax(54px, 1fr));
+.chartControls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
   margin-bottom: 12px;
+}
+
+.chartTypeTabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+}
+
+.rangeTabs {
+  grid-template-columns: repeat(7, minmax(58px, 1fr));
 }
 
 .chartCanvas {
   position: relative;
   min-height: 344px;
-  border: 1px solid rgba(167, 139, 250, 0.18);
+  border: 1px solid rgba(56, 189, 248, 0.15);
   border-radius: 8px;
   background:
-    linear-gradient(180deg, rgba(124, 58, 237, 0.12), transparent 58%),
-    rgba(8, 6, 18, 0.58);
+    linear-gradient(180deg, rgba(14, 165, 233, 0.08), transparent 58%),
+    rgba(3, 10, 20, 0.64);
   padding: 14px;
 }
 
@@ -471,7 +487,7 @@
 }
 
 .gridLine {
-  stroke: rgba(196, 181, 253, 0.14);
+  stroke: rgba(125, 211, 252, 0.12);
   stroke-width: 1;
 }
 
@@ -481,20 +497,20 @@
 
 .pricePath {
   fill: none;
-  stroke: #34d399;
+  stroke: #38bdf8;
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 4;
 }
 
 .activeLine {
-  stroke: rgba(216, 180, 254, 0.62);
+  stroke: rgba(125, 211, 252, 0.54);
   stroke-dasharray: 5 5;
   stroke-width: 1.5;
 }
 
 .activeDot {
-  fill: #160f2d;
+  fill: #07111f;
   stroke: #67e8f9;
   stroke-width: 4;
 }
@@ -504,9 +520,9 @@
   top: 22px;
   min-width: 112px;
   transform: translateX(-50%);
-  border: 1px solid rgba(167, 139, 250, 0.32);
+  border: 1px solid rgba(56, 189, 248, 0.28);
   border-radius: 8px;
-  background: #25183e;
+  background: #0d1b2e;
   padding: 10px 12px;
   box-shadow: 0 12px 28px rgba(0, 0, 0, 0.28);
   pointer-events: none;
@@ -515,7 +531,7 @@
 .chartTooltip span {
   display: block;
   margin-bottom: 4px;
-  color: #ada4c8;
+  color: #9fb2ca;
   font-size: 12px;
   font-weight: 850;
 }
@@ -536,6 +552,32 @@
   background: rgba(8, 145, 178, 0.1);
   padding: 14px;
   color: #67e8f9;
+}
+
+.candleLayer line {
+  stroke-width: 2;
+}
+
+.candleLayer rect {
+  stroke-width: 1.5;
+}
+
+.candleUp line,
+.candleUp rect {
+  stroke: #22c55e;
+}
+
+.candleUp rect {
+  fill: rgba(34, 197, 94, 0.72);
+}
+
+.candleDown line,
+.candleDown rect {
+  stroke: #ef4444;
+}
+
+.candleDown rect {
+  fill: rgba(239, 68, 68, 0.72);
 }
 
 .notePanel strong {
@@ -570,9 +612,9 @@
   width: 128px;
   height: 128px;
   place-items: center;
-  border: 10px solid rgba(167, 139, 250, 0.18);
+  border: 10px solid rgba(56, 189, 248, 0.16);
   border-top-color: #34d399;
-  border-right-color: #8b5cf6;
+  border-right-color: #38bdf8;
   border-radius: 999px;
 }
 
@@ -589,7 +631,7 @@
 }
 
 .signalTable > span {
-  color: #ada4c8;
+  color: #9fb2ca;
   font-size: 13px;
   font-weight: 800;
 }
@@ -600,7 +642,7 @@
   grid-template-columns: 92px 1fr auto;
   gap: 10px;
   align-items: center;
-  border-top: 1px solid rgba(196, 181, 253, 0.12);
+  border-top: 1px solid rgba(125, 211, 252, 0.12);
   padding-top: 10px;
 }
 
@@ -612,7 +654,7 @@
 
 .signalTable span,
 .researchList small {
-  color: #ada4c8;
+  color: #9fb2ca;
   font-size: 13px;
 }
 
@@ -627,9 +669,9 @@
 }
 
 .emptyState {
-  border: 1px dashed rgba(167, 139, 250, 0.3);
+  border: 1px dashed rgba(56, 189, 248, 0.28);
   border-radius: 8px;
-  color: #ada4c8;
+  color: #9fb2ca;
   padding: 18px;
   text-align: center;
 }
@@ -652,7 +694,7 @@
   .watchButtonActive:hover,
   .marketTab:hover,
   .rangeTabs button:hover {
-    border-color: rgba(167, 139, 250, 0.7);
+    border-color: rgba(56, 189, 248, 0.58);
   }
 }
 
@@ -664,7 +706,7 @@
   .sidebar {
     min-height: auto;
     border-right: 0;
-    border-bottom: 1px solid rgba(196, 181, 253, 0.14);
+    border-bottom: 1px solid rgba(125, 211, 252, 0.13);
   }
 
   .navList {

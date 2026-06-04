@@ -20,7 +20,8 @@ import { useMemo, useState } from "react";
 
 import styles from "./page.module.css";
 
-type RangeKey = "1D" | "1W" | "1M" | "3M";
+type RangeKey = "LIVE" | "1D" | "1W" | "1M" | "1Y" | "5Y" | "ALL";
+type ChartType = "candle" | "line";
 type MarketScope = "domestic" | "overseas";
 type Language = "en" | "ko";
 
@@ -40,7 +41,14 @@ type Stock = {
   series: Record<RangeKey, number[]>;
 };
 
-const ranges: RangeKey[] = ["1D", "1W", "1M", "3M"];
+type Candle = {
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+};
+
+const ranges: RangeKey[] = ["LIVE", "1D", "1W", "1M", "1Y", "5Y", "ALL"];
 
 const copy = {
   en: {
@@ -54,6 +62,7 @@ const copy = {
     language: "Language",
     market: "Market",
     open: "Open",
+    dataMode: "Sample data",
     home: "Home",
     portfolio: "Portfolio",
     signals: "Signals",
@@ -75,6 +84,18 @@ const copy = {
     addToWatchlist: "Add to watchlist",
     watching: "Watching",
     chartRange: "Chart range",
+    chartType: "Chart type",
+    candle: "Candles",
+    line: "Line",
+    rangeLabels: {
+      LIVE: "Today live",
+      "1D": "1D",
+      "1W": "1W",
+      "1M": "1M",
+      "1Y": "1Y",
+      "5Y": "5Y",
+      ALL: "All",
+    },
     point: "Point",
     researchNotes: "Research & Notes",
     portfolioSignalPanel: "Portfolio signal",
@@ -96,6 +117,7 @@ const copy = {
     language: "\uC5B8\uC5B4",
     market: "\uC2DC\uC7A5",
     open: "\uC5F4\uB9BC",
+    dataMode: "\uC0D8\uD50C \uB370\uC774\uD130",
     home: "\uD648",
     portfolio: "\uD3EC\uD2B8\uD3F4\uB9AC\uC624",
     signals: "\uC2DC\uADF8\uB110",
@@ -117,6 +139,18 @@ const copy = {
     addToWatchlist: "\uAD00\uC2EC\uC885\uBAA9 \uCD94\uAC00",
     watching: "\uAD00\uC2EC\uC885\uBAA9",
     chartRange: "\uCC28\uD2B8 \uAE30\uAC04",
+    chartType: "\uCC28\uD2B8 \uC720\uD615",
+    candle: "\uBD09\uCC28\uD2B8",
+    line: "\uC120\uCC28\uD2B8",
+    rangeLabels: {
+      LIVE: "\uC624\uB298 \uC2E4\uC2DC\uAC04",
+      "1D": "1D",
+      "1W": "1W",
+      "1M": "1M",
+      "1Y": "1Y",
+      "5Y": "5Y",
+      ALL: "\uC804\uCCB4",
+    },
     point: "\uC9C0\uC810",
     researchNotes: "\uB9AC\uC11C\uCE58 & \uB178\uD2B8",
     portfolioSignalPanel: "\uD3EC\uD2B8\uD3F4\uB9AC\uC624 \uC2DC\uADF8\uB110",
@@ -129,6 +163,23 @@ const copy = {
     noMatches: "\uAC80\uC0C9 \uACB0\uACFC \uC5C6\uC74C",
   },
 } as const;
+
+function makeSeries(values: number[]): Record<RangeKey, number[]> {
+  const first = values[0];
+  const last = values[values.length - 1];
+  const direction = last >= first ? 1 : -1;
+  const spread = Math.max(Math.abs(last - first), Math.abs(last) * 0.012, 1);
+
+  return {
+    LIVE: values,
+    "1D": values.map((value, index) => value + direction * spread * 0.08 * Math.sin(index)),
+    "1W": values.map((value, index) => value - direction * spread * 0.22 + index * direction * spread * 0.055),
+    "1M": values.map((value, index) => value - direction * spread * 0.72 + index * direction * spread * 0.15),
+    "1Y": values.map((value, index) => value - direction * spread * 1.85 + index * direction * spread * 0.36),
+    "5Y": values.map((value, index) => value - direction * spread * 4.6 + index * direction * spread * 0.82),
+    ALL: values.map((value, index) => value - direction * spread * 7.4 + index * direction * spread * 1.22),
+  };
+}
 
 const stocks: Stock[] = [
   {
@@ -144,12 +195,7 @@ const stocks: Stock[] = [
     sectorKo: "\uC18C\uBE44\uC790 \uAE30\uC220",
     signal: "Buy",
     strategy: "Trend Following",
-    series: {
-      "1D": [211.2, 211.8, 212.4, 212.1, 213.2, 213.8, 214.42],
-      "1W": [205.1, 207.8, 206.9, 210.4, 211.7, 213.3, 214.42],
-      "1M": [190.4, 194.8, 199.2, 197.5, 204.1, 209.6, 214.42],
-      "3M": [178.4, 181.2, 190.8, 185.9, 197.6, 205.2, 214.42],
-    },
+    series: makeSeries([211.2, 211.8, 212.4, 212.1, 213.2, 213.8, 214.42]),
   },
   {
     symbol: "NVDA",
@@ -164,12 +210,7 @@ const stocks: Stock[] = [
     sectorKo: "\uBC18\uB3C4\uCCB4",
     signal: "Buy",
     strategy: "Momentum",
-    series: {
-      "1D": [136.8, 138.1, 137.7, 140.2, 141.4, 141.9, 142.65],
-      "1W": [129.5, 132.8, 134.9, 136.2, 139.4, 140.8, 142.65],
-      "1M": [118.4, 124.2, 121.8, 130.6, 134.4, 139.1, 142.65],
-      "3M": [107.2, 115.8, 112.1, 126.3, 119.7, 137.5, 142.65],
-    },
+    series: makeSeries([136.8, 138.1, 137.7, 140.2, 141.4, 141.9, 142.65]),
   },
   {
     symbol: "TSLA",
@@ -184,12 +225,7 @@ const stocks: Stock[] = [
     sectorKo: "\uC790\uB3D9\uCC28",
     signal: "Watch",
     strategy: "Mean Reversion",
-    series: {
-      "1D": [187.4, 186.5, 185.8, 186.1, 184.9, 184.4, 184.21],
-      "1W": [191.8, 188.6, 190.4, 186.2, 185.9, 183.7, 184.21],
-      "1M": [174.2, 181.7, 194.1, 188.3, 192.8, 186.4, 184.21],
-      "3M": [211.5, 205.4, 196.2, 187.8, 192.4, 181.1, 184.21],
-    },
+    series: makeSeries([187.4, 186.5, 185.8, 186.1, 184.9, 184.4, 184.21]),
   },
   {
     symbol: "MSFT",
@@ -204,12 +240,7 @@ const stocks: Stock[] = [
     sectorKo: "\uD074\uB77C\uC6B0\uB4DC \uC18C\uD504\uD2B8\uC6E8\uC5B4",
     signal: "Hold",
     strategy: "Quality Growth",
-    series: {
-      "1D": [494.2, 495.8, 497.1, 496.6, 497.8, 498.1, 498.37],
-      "1W": [486.1, 491.2, 489.9, 493.5, 496.2, 497.4, 498.37],
-      "1M": [468.4, 472.6, 481.8, 479.2, 490.7, 494.1, 498.37],
-      "3M": [441.8, 455.7, 462.3, 471.5, 486.9, 492.4, 498.37],
-    },
+    series: makeSeries([494.2, 495.8, 497.1, 496.6, 497.8, 498.1, 498.37]),
   },
   {
     symbol: "005930",
@@ -224,12 +255,7 @@ const stocks: Stock[] = [
     sectorKo: "\uBC18\uB3C4\uCCB4",
     signal: "Watch",
     strategy: "Cycle Recovery",
-    series: {
-      "1D": [72700, 72900, 73100, 73000, 73400, 73300, 73500],
-      "1W": [71100, 71800, 71500, 72400, 72900, 73200, 73500],
-      "1M": [68300, 69500, 70400, 72100, 71600, 72800, 73500],
-      "3M": [65100, 66800, 69200, 71000, 69900, 72600, 73500],
-    },
+    series: makeSeries([72700, 72900, 73100, 73000, 73400, 73300, 73500]),
   },
   {
     symbol: "000660",
@@ -244,12 +270,7 @@ const stocks: Stock[] = [
     sectorKo: "\uBA54\uBAA8\uB9AC \uBC18\uB3C4\uCCB4",
     signal: "Buy",
     strategy: "Momentum",
-    series: {
-      "1D": [193500, 194800, 196200, 195900, 197100, 198200, 198700],
-      "1W": [187200, 189600, 192100, 191300, 195400, 197500, 198700],
-      "1M": [174500, 181400, 186800, 183900, 191700, 194300, 198700],
-      "3M": [151200, 162700, 158900, 174300, 181800, 190500, 198700],
-    },
+    series: makeSeries([193500, 194800, 196200, 195900, 197100, 198200, 198700]),
   },
   {
     symbol: "035420",
@@ -264,12 +285,7 @@ const stocks: Stock[] = [
     sectorKo: "\uC778\uD130\uB137 \uD50C\uB7AB\uD3FC",
     signal: "Hold",
     strategy: "Range Breakout",
-    series: {
-      "1D": [186000, 185700, 185100, 184200, 184900, 184100, 184500],
-      "1W": [189400, 188200, 187100, 185400, 186000, 184900, 184500],
-      "1M": [177800, 181200, 187900, 190200, 186300, 185100, 184500],
-      "3M": [169200, 174500, 182300, 179900, 188100, 183700, 184500],
-    },
+    series: makeSeries([186000, 185700, 185100, 184200, 184900, 184100, 184500]),
   },
 ];
 
@@ -331,13 +347,33 @@ function pointFor(values: number[], index: number, width: number, height: number
   return { x, y };
 }
 
+function buildCandles(values: number[]): Candle[] {
+  return values.map((close, index) => {
+    const previous = values[Math.max(index - 1, 0)];
+    const open = index === 0 ? previous * 0.997 : previous;
+    const bodySpread = Math.abs(close - open);
+    const wickSpread = Math.max(Math.abs(close) * 0.004, bodySpread * 0.75, 1);
+    const high = Math.max(open, close) + wickSpread * (0.75 + (index % 3) * 0.16);
+    const low = Math.min(open, close) - wickSpread * (0.72 + (index % 2) * 0.18);
+
+    return { open, high, low, close };
+  });
+}
+
+function yFor(value: number, min: number, max: number, height: number, padding: number) {
+  const spread = max - min || 1;
+
+  return padding + ((max - value) / spread) * (height - padding * 2);
+}
+
 export default function StockDashboard() {
   const [query, setQuery] = useState("");
   const [marketScope, setMarketScope] = useState<MarketScope>("overseas");
-  const [language, setLanguage] = useState<Language>("en");
+  const [language, setLanguage] = useState<Language>("ko");
   const [selectedSymbol, setSelectedSymbol] = useState("AAPL");
   const [watchlist, setWatchlist] = useState(initialWatchlist);
-  const [range, setRange] = useState<RangeKey>("1D");
+  const [range, setRange] = useState<RangeKey>("LIVE");
+  const [chartType, setChartType] = useState<ChartType>("candle");
   const [activePoint, setActivePoint] = useState<number | null>(null);
 
   const t = copy[language];
@@ -363,11 +399,15 @@ export default function StockDashboard() {
     stocks.find((stock) => stock.symbol === selectedSymbol && stock.region === marketScope) ??
     marketStocks[0];
   const selectedValues = selectedStock.series[range];
+  const selectedCandles = buildCandles(selectedValues);
   const selectedIndex = activePoint ?? selectedValues.length - 1;
   const selectedPointValue = selectedValues[selectedIndex];
   const chartWidth = 820;
   const chartHeight = 310;
   const chartPadding = 28;
+  const candleExtremes = selectedCandles.flatMap((candle) => [candle.high, candle.low]);
+  const chartMin = Math.min(...selectedValues, ...candleExtremes);
+  const chartMax = Math.max(...selectedValues, ...candleExtremes);
   const path = buildPath(selectedValues, chartWidth, chartHeight, chartPadding);
   const activeCoordinates = pointFor(
     selectedValues,
@@ -518,6 +558,7 @@ export default function StockDashboard() {
               <span aria-hidden="true" />
               {t.open}
             </strong>
+            <small>{t.dataMode}</small>
           </div>
         </section>
 
@@ -593,20 +634,35 @@ export default function StockDashboard() {
               </div>
             </div>
 
-            <div className={styles.rangeTabs} aria-label={t.chartRange}>
-              {ranges.map((rangeKey) => (
-                <button
-                  key={rangeKey}
-                  className={rangeKey === range ? styles.rangeActive : ""}
-                  type="button"
-                  onClick={() => {
-                    setRange(rangeKey);
-                    setActivePoint(null);
-                  }}
-                >
-                  {rangeKey}
-                </button>
-              ))}
+            <div className={styles.chartControls}>
+              <div className={styles.chartTypeTabs} aria-label={t.chartType}>
+                {(["candle", "line"] as ChartType[]).map((type) => (
+                  <button
+                    key={type}
+                    className={type === chartType ? styles.rangeActive : ""}
+                    type="button"
+                    onClick={() => setChartType(type)}
+                  >
+                    {type === "candle" ? <BarChart3 size={15} /> : <LineChart size={15} />}
+                    {type === "candle" ? t.candle : t.line}
+                  </button>
+                ))}
+              </div>
+              <div className={styles.rangeTabs} aria-label={t.chartRange}>
+                {ranges.map((rangeKey) => (
+                  <button
+                    key={rangeKey}
+                    className={rangeKey === range ? styles.rangeActive : ""}
+                    type="button"
+                    onClick={() => {
+                      setRange(rangeKey);
+                      setActivePoint(null);
+                    }}
+                  >
+                    {t.rangeLabels[rangeKey]}
+                  </button>
+                ))}
+              </div>
             </div>
 
             <div className={styles.chartCanvas}>
@@ -619,7 +675,7 @@ export default function StockDashboard() {
               >
                 <defs>
                   <linearGradient id="priceArea" x1="0" x2="0" y1="0" y2="1">
-                    <stop offset="0%" stopColor="#8b5cf6" stopOpacity="0.34" />
+                    <stop offset="0%" stopColor="#38bdf8" stopOpacity="0.28" />
                     <stop offset="68%" stopColor="#22c55e" stopOpacity="0.1" />
                     <stop offset="100%" stopColor="#22c55e" stopOpacity="0" />
                   </linearGradient>
@@ -634,13 +690,48 @@ export default function StockDashboard() {
                     y2={chartPadding + line * 82}
                   />
                 ))}
-                <path
-                  className={styles.areaPath}
-                  d={`${path} L ${chartWidth - chartPadding} ${chartHeight - chartPadding} L ${chartPadding} ${
-                    chartHeight - chartPadding
-                  } Z`}
-                />
-                <path className={styles.pricePath} d={path} />
+                {chartType === "line" ? (
+                  <>
+                    <path
+                      className={styles.areaPath}
+                      d={`${path} L ${chartWidth - chartPadding} ${chartHeight - chartPadding} L ${chartPadding} ${
+                        chartHeight - chartPadding
+                      } Z`}
+                    />
+                    <path className={styles.pricePath} d={path} />
+                  </>
+                ) : (
+                  <g className={styles.candleLayer}>
+                    {selectedCandles.map((candle, index) => {
+                      const x =
+                        chartPadding +
+                        (index / (selectedCandles.length - 1)) * (chartWidth - chartPadding * 2);
+                      const openY = yFor(candle.open, chartMin, chartMax, chartHeight, chartPadding);
+                      const closeY = yFor(candle.close, chartMin, chartMax, chartHeight, chartPadding);
+                      const highY = yFor(candle.high, chartMin, chartMax, chartHeight, chartPadding);
+                      const lowY = yFor(candle.low, chartMin, chartMax, chartHeight, chartPadding);
+                      const isUp = candle.close >= candle.open;
+                      const bodyTop = Math.min(openY, closeY);
+                      const bodyHeight = Math.max(Math.abs(closeY - openY), 4);
+
+                      return (
+                        <g
+                          className={isUp ? styles.candleUp : styles.candleDown}
+                          key={`${range}-${index}`}
+                        >
+                          <line x1={x} x2={x} y1={highY} y2={lowY} />
+                          <rect
+                            x={x - 13}
+                            y={bodyTop}
+                            width="26"
+                            height={bodyHeight}
+                            rx="3"
+                          />
+                        </g>
+                      );
+                    })}
+                  </g>
+                )}
                 <line
                   className={styles.activeLine}
                   x1={activeCoordinates.x}

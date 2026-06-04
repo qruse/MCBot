@@ -879,7 +879,6 @@ export default function StockDashboard() {
           <div>
             <span className={styles.productName}>MCBot</span>
             <h1>{t.appName}</h1>
-            <p>{t.appSubtitle}</p>
           </div>
           <div className={styles.marketTicker} aria-label="Market overview">
             {marketFeed.map((feed) => (

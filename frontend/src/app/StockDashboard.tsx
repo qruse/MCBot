@@ -47,7 +47,16 @@ type Stock = {
   sectorKo: string;
   signal: "Buy" | "Watch" | "Hold";
   strategy: string;
-  series: Record<RangeKey, number[]>;
+  series: Record<RangeKey, ChartPoint[]>;
+};
+
+type ChartPoint = {
+  label: string;
+  value: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
 };
 
 type KisQuote = {
@@ -81,6 +90,7 @@ type KisWatchlistResponse = {
 type DataStatus = "idle" | "loading" | "ready" | "error";
 
 type Candle = {
+  label: string;
   open: number;
   high: number;
   low: number;
@@ -88,6 +98,15 @@ type Candle = {
 };
 
 const ranges: RangeKey[] = ["LIVE", "1D", "1W", "1M", "1Y", "5Y", "ALL"];
+const rangePointCounts: Record<RangeKey, number> = {
+  LIVE: 48,
+  "1D": 48,
+  "1W": 35,
+  "1M": 40,
+  "1Y": 52,
+  "5Y": 60,
+  ALL: 72,
+};
 
 const copy = {
   en: {
@@ -231,20 +250,123 @@ const copy = {
   },
 } as const;
 
-function makeSeries(values: number[]): Record<RangeKey, number[]> {
+function formatClock(totalMinutes: number) {
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = Math.round(totalMinutes % 60);
+
+  return `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}`;
+}
+
+function pointLabel(range: RangeKey, index: number, count: number) {
+  if (range === "LIVE" || range === "1D") {
+    const start = 9 * 60 + 30;
+    const end = 16 * 60;
+    const totalMinutes = start + ((end - start) * index) / Math.max(count - 1, 1);
+
+    return formatClock(totalMinutes);
+  }
+
+  if (range === "1W") {
+    const days = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+    const day = days[Math.min(days.length - 1, Math.floor((index / count) * days.length))];
+    const start = 9 * 60 + 30;
+    const end = 16 * 60;
+    const dayProgress = (index % Math.ceil(count / days.length)) / Math.ceil(count / days.length);
+
+    return `${day} ${formatClock(start + (end - start) * dayProgress)}`;
+  }
+
+  if (range === "1M") {
+    return `D-${count - index - 1}`;
+  }
+
+  if (range === "1Y") {
+    return `M-${Math.max(0, Math.ceil(((count - index - 1) / count) * 12))}`;
+  }
+
+  if (range === "5Y") {
+    return `Y-${Math.max(0, Math.ceil(((count - index - 1) / count) * 5))}`;
+  }
+
+  return `P-${index + 1}`;
+}
+
+function interpolate(values: number[], ratio: number) {
+  const scaledIndex = ratio * (values.length - 1);
+  const leftIndex = Math.floor(scaledIndex);
+  const rightIndex = Math.min(values.length - 1, leftIndex + 1);
+  const localRatio = scaledIndex - leftIndex;
+
+  return values[leftIndex] + (values[rightIndex] - values[leftIndex]) * localRatio;
+}
+
+function baseValuesForRange(values: number[], range: RangeKey) {
   const first = values[0];
   const last = values[values.length - 1];
   const direction = last >= first ? 1 : -1;
   const spread = Math.max(Math.abs(last - first), Math.abs(last) * 0.012, 1);
 
+  if (range === "LIVE") {
+    return values;
+  }
+
+  const multipliers: Record<Exclude<RangeKey, "LIVE">, { start: number; step: number }> = {
+    "1D": { start: 0.08, step: 0 },
+    "1W": { start: -0.22, step: 0.055 },
+    "1M": { start: -0.72, step: 0.15 },
+    "1Y": { start: -1.85, step: 0.36 },
+    "5Y": { start: -4.6, step: 0.82 },
+    ALL: { start: -7.4, step: 1.22 },
+  };
+  const multiplier = multipliers[range];
+
+  return values.map(
+    (value, index) => value + direction * spread * multiplier.start + index * direction * spread * multiplier.step,
+  );
+}
+
+function buildChartPoints(values: number[], range: RangeKey): ChartPoint[] {
+  const count = rangePointCounts[range];
+  const first = values[0];
+  const last = values[values.length - 1];
+  const spread = Math.max(Math.abs(last - first), Math.abs(last) * 0.01, 1);
+
+  return Array.from({ length: count }, (_, index) => {
+    const ratio = index / Math.max(count - 1, 1);
+    const base = interpolate(values, ratio);
+    const wave =
+      index === 0 || index === count - 1
+        ? 0
+        : Math.sin(index * 0.92 + range.length) * spread * 0.11 +
+          Math.sin(index * 0.31) * spread * 0.07;
+    const close = base + wave;
+    const previousClose = index === 0 ? close - spread * 0.025 : interpolate(values, (index - 1) / count);
+    const open = index === 0 ? close - spread * 0.018 : previousClose + wave * 0.18;
+    const bodySpread = Math.abs(close - open);
+    const wickSpread = Math.max(Math.abs(close) * 0.0016, bodySpread * 0.58, spread * 0.035);
+    const high = Math.max(open, close) + wickSpread * (0.55 + (index % 4) * 0.12);
+    const low = Math.min(open, close) - wickSpread * (0.54 + (index % 3) * 0.11);
+
+    return {
+      label: pointLabel(range, index, count),
+      value: close,
+      open,
+      high,
+      low,
+      close,
+    };
+  });
+}
+
+function makeSeries(values: number[]): Record<RangeKey, ChartPoint[]> {
   return {
-    LIVE: values,
-    "1D": values.map((value, index) => value + direction * spread * 0.08 * Math.sin(index)),
-    "1W": values.map((value, index) => value - direction * spread * 0.22 + index * direction * spread * 0.055),
-    "1M": values.map((value, index) => value - direction * spread * 0.72 + index * direction * spread * 0.15),
-    "1Y": values.map((value, index) => value - direction * spread * 1.85 + index * direction * spread * 0.36),
-    "5Y": values.map((value, index) => value - direction * spread * 4.6 + index * direction * spread * 0.82),
-    ALL: values.map((value, index) => value - direction * spread * 7.4 + index * direction * spread * 1.22),
+    LIVE: buildChartPoints(baseValuesForRange(values, "LIVE"), "LIVE"),
+    "1D": buildChartPoints(baseValuesForRange(values, "1D"), "1D"),
+    "1W": buildChartPoints(baseValuesForRange(values, "1W"), "1W"),
+    "1M": buildChartPoints(baseValuesForRange(values, "1M"), "1M"),
+    "1Y": buildChartPoints(baseValuesForRange(values, "1Y"), "1Y"),
+    "5Y": buildChartPoints(baseValuesForRange(values, "5Y"), "5Y"),
+    ALL: buildChartPoints(baseValuesForRange(values, "ALL"), "ALL"),
   };
 }
 
@@ -441,41 +563,55 @@ function formatPrice(stock: Stock) {
   })}`;
 }
 
-function buildPath(values: number[], width: number, height: number, padding: number) {
-  const min = Math.min(...values);
-  const max = Math.max(...values);
+function xFor(index: number, count: number, width: number, padding: number) {
+  return padding + (index / Math.max(count - 1, 1)) * (width - padding * 2);
+}
+
+function buildPath(
+  points: ChartPoint[],
+  width: number,
+  height: number,
+  padding: number,
+  min: number,
+  max: number,
+) {
   const spread = max - min || 1;
 
-  return values
-    .map((value, index) => {
-      const x = padding + (index / (values.length - 1)) * (width - padding * 2);
-      const y = padding + ((max - value) / spread) * (height - padding * 2);
+  return points
+    .map((point, index) => {
+      const x = xFor(index, points.length, width, padding);
+      const y = padding + ((max - point.value) / spread) * (height - padding * 2);
 
       return `${index === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
     })
     .join(" ");
 }
 
-function pointFor(values: number[], index: number, width: number, height: number, padding: number) {
-  const min = Math.min(...values);
-  const max = Math.max(...values);
+function pointFor(
+  points: ChartPoint[],
+  index: number,
+  width: number,
+  height: number,
+  padding: number,
+  min: number,
+  max: number,
+) {
   const spread = max - min || 1;
-  const x = padding + (index / (values.length - 1)) * (width - padding * 2);
-  const y = padding + ((max - values[index]) / spread) * (height - padding * 2);
+  const x = xFor(index, points.length, width, padding);
+  const y = padding + ((max - points[index].value) / spread) * (height - padding * 2);
 
   return { x, y };
 }
 
-function buildCandles(values: number[]): Candle[] {
-  return values.map((close, index) => {
-    const previous = values[Math.max(index - 1, 0)];
-    const open = index === 0 ? previous * 0.997 : previous;
-    const bodySpread = Math.abs(close - open);
-    const wickSpread = Math.max(Math.abs(close) * 0.004, bodySpread * 0.75, 1);
-    const high = Math.max(open, close) + wickSpread * (0.75 + (index % 3) * 0.16);
-    const low = Math.min(open, close) - wickSpread * (0.72 + (index % 2) * 0.18);
-
-    return { open, high, low, close };
+function buildCandles(points: ChartPoint[]): Candle[] {
+  return points.map((point) => {
+    return {
+      label: point.label,
+      open: point.open,
+      high: point.high,
+      low: point.low,
+      close: point.close,
+    };
   });
 }
 
@@ -483,6 +619,27 @@ function yFor(value: number, min: number, max: number, height: number, padding: 
   const spread = max - min || 1;
 
   return padding + ((max - value) / spread) * (height - padding * 2);
+}
+
+function axisTickIndexes(count: number) {
+  const tickCount = 6;
+  const step = Math.max(1, Math.floor((count - 1) / (tickCount - 1)));
+  const indexes = Array.from({ length: tickCount }, (_, index) =>
+    Math.min(count - 1, index * step),
+  );
+
+  return [...new Set([...indexes, count - 1])];
+}
+
+function formatAxisPrice(value: number, currency: Stock["currency"]) {
+  if (currency === "KRW") {
+    return Math.round(value).toLocaleString("ko-KR");
+  }
+
+  return value.toLocaleString("en-US", {
+    maximumFractionDigits: 2,
+    minimumFractionDigits: 2,
+  });
 }
 
 export default function StockDashboard() {
@@ -569,28 +726,43 @@ export default function StockDashboard() {
   const selectedStock =
     stocks.find((stock) => stock.symbol === selectedSymbol && stock.region === marketScope) ??
     marketStocks[0];
-  const selectedValues = selectedStock.series[range];
-  const selectedCandles = buildCandles(selectedValues);
-  const selectedIndex = activePoint ?? selectedValues.length - 1;
-  const selectedPointValue = selectedValues[selectedIndex];
+  const selectedPoints = selectedStock.series[range];
+  const selectedValues = selectedPoints.map((point) => point.value);
+  const selectedCandles = buildCandles(selectedPoints);
+  const selectedIndex = activePoint ?? selectedPoints.length - 1;
+  const selectedPoint = selectedPoints[selectedIndex];
+  const selectedPointValue = selectedPoint.value;
   const rangeStart = selectedValues[0];
   const rangeEnd = selectedValues[selectedValues.length - 1];
   const rangeMove = ((rangeEnd - rangeStart) / rangeStart) * 100;
   const rangeHigh = Math.max(...selectedValues);
   const rangeLow = Math.min(...selectedValues);
   const chartWidth = 820;
-  const chartHeight = 310;
+  const chartHeight = 340;
   const chartPadding = 28;
   const candleExtremes = selectedCandles.flatMap((candle) => [candle.high, candle.low]);
-  const chartMin = Math.min(...selectedValues, ...candleExtremes);
-  const chartMax = Math.max(...selectedValues, ...candleExtremes);
-  const path = buildPath(selectedValues, chartWidth, chartHeight, chartPadding);
+  const rawChartMin = Math.min(...selectedValues, ...candleExtremes);
+  const rawChartMax = Math.max(...selectedValues, ...candleExtremes);
+  const chartSpread = rawChartMax - rawChartMin || Math.abs(rangeEnd) * 0.01 || 1;
+  const chartMin = rawChartMin - chartSpread * 0.1;
+  const chartMax = rawChartMax + chartSpread * 0.1;
+  const path = buildPath(selectedPoints, chartWidth, chartHeight, chartPadding, chartMin, chartMax);
+  const xAxisIndexes = axisTickIndexes(selectedPoints.length);
+  const yAxisTicks = [0, 1, 2, 3].map(
+    (tick) => chartMax - ((chartMax - chartMin) * tick) / 3,
+  );
+  const candleWidth = Math.max(
+    5,
+    Math.min(14, ((chartWidth - chartPadding * 2) / selectedCandles.length) * 0.55),
+  );
   const activeCoordinates = pointFor(
-    selectedValues,
+    selectedPoints,
     selectedIndex,
     chartWidth,
     chartHeight,
     chartPadding,
+    chartMin,
+    chartMax,
   );
   const watchedStocks = watchlist
     .map((symbol) => stocks.find((stock) => stock.symbol === symbol))
@@ -920,16 +1092,47 @@ export default function StockDashboard() {
                     <stop offset="100%" stopColor="#22c55e" stopOpacity="0" />
                   </linearGradient>
                 </defs>
-                {[0, 1, 2, 3].map((line) => (
-                  <line
-                    key={line}
-                    className={styles.gridLine}
-                    x1="0"
-                    x2={chartWidth}
-                    y1={chartPadding + line * 82}
-                    y2={chartPadding + line * 82}
-                  />
-                ))}
+                {yAxisTicks.map((tick) => {
+                  const y = yFor(tick, chartMin, chartMax, chartHeight, chartPadding);
+
+                  return (
+                    <g key={tick.toFixed(2)}>
+                      <line
+                        className={styles.gridLine}
+                        x1={chartPadding}
+                        x2={chartWidth - chartPadding}
+                        y1={y}
+                        y2={y}
+                      />
+                      <text className={styles.axisLabel} x={chartPadding} y={y - 6}>
+                        {formatAxisPrice(tick, selectedStock.currency)}
+                      </text>
+                    </g>
+                  );
+                })}
+                {xAxisIndexes.map((index) => {
+                  const x = xFor(index, selectedPoints.length, chartWidth, chartPadding);
+
+                  return (
+                    <g key={`${range}-${selectedPoints[index].label}`}>
+                      <line
+                        className={styles.verticalGridLine}
+                        x1={x}
+                        x2={x}
+                        y1={chartPadding}
+                        y2={chartHeight - chartPadding}
+                      />
+                      <text
+                        className={styles.axisLabel}
+                        textAnchor="middle"
+                        x={x}
+                        y={chartHeight - 8}
+                      >
+                        {selectedPoints[index].label}
+                      </text>
+                    </g>
+                  );
+                })}
                 {chartType === "line" ? (
                   <>
                     <path
@@ -943,9 +1146,7 @@ export default function StockDashboard() {
                 ) : (
                   <g className={styles.candleLayer}>
                     {selectedCandles.map((candle, index) => {
-                      const x =
-                        chartPadding +
-                        (index / (selectedCandles.length - 1)) * (chartWidth - chartPadding * 2);
+                      const x = xFor(index, selectedCandles.length, chartWidth, chartPadding);
                       const openY = yFor(candle.open, chartMin, chartMax, chartHeight, chartPadding);
                       const closeY = yFor(candle.close, chartMin, chartMax, chartHeight, chartPadding);
                       const highY = yFor(candle.high, chartMin, chartMax, chartHeight, chartPadding);
@@ -961,11 +1162,11 @@ export default function StockDashboard() {
                         >
                           <line x1={x} x2={x} y1={highY} y2={lowY} />
                           <rect
-                            x={x - 13}
+                            x={x - candleWidth / 2}
                             y={bodyTop}
-                            width="26"
+                            width={candleWidth}
                             height={bodyHeight}
-                            rx="3"
+                            rx="2.5"
                           />
                         </g>
                       );
@@ -991,7 +1192,7 @@ export default function StockDashboard() {
                 style={{ left: `${(activeCoordinates.x / chartWidth) * 100}%` }}
               >
                 <span>
-                  {t.point} {selectedIndex + 1}
+                  {selectedPoint.label}
                 </span>
                 <strong>
                   {selectedStock.currency === "KRW"

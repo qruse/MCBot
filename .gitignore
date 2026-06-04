@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+*.egg-info/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+
+# Environment
+.env
+.env.*
+!.env.example
+!**/.env.example
+
+# Local logs and temporary output
+test_logs/*
+!test_logs/.gitkeep
+artifacts/*
+!artifacts/.gitkeep
+tmps/*
+!tmps/.gitkeep
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

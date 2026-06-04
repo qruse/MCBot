@@ -1,10 +1,11 @@
 import os
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from app.database import ping_mongo
+from app.kis import KisServiceError, KisWatchlistResponse, get_watchlist_quotes
 
 
 class HealthResponse(BaseModel):
@@ -26,6 +27,8 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3001",
         "http://localhost:8080",
         "http://127.0.0.1:8080",
     ],
@@ -53,3 +56,11 @@ def read_health() -> HealthResponse:
         version=app.version,
         database=database,
     )
+
+
+@app.get("/quotes/kis/watchlist", response_model=KisWatchlistResponse)
+async def read_kis_watchlist_quotes() -> KisWatchlistResponse:
+    try:
+        return await get_watchlist_quotes()
+    except KisServiceError as error:
+        raise HTTPException(status_code=error.status_code, detail=error.message) from error

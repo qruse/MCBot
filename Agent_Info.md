@@ -16,6 +16,8 @@ automated trading assistant.
 - `backend/app/main.py`: FastAPI app, CORS settings, `/`, and `/health`
 - `backend/app/database.py`: MongoDB client helpers, database/collection accessors, and ping
   health check using `MONGO_URI`
+- `backend/app/kis.py`: Korea Investment Securities Open API client for the live quote watchlist
+  (`NVDA`, `MU`, `SNDK`, `005930`, `000660`) with token and quote caching
 - `backend/tests/test_main.py`: backend endpoint tests
 - `backend/Dockerfile`: production backend container image
 - `frontend/Dockerfile`: production Next.js standalone container image
@@ -32,3 +34,10 @@ automated trading assistant.
 - Local development uses `MONGO_URI=mongodb://localhost:27017` and `MONGO_DB_NAME=mcbot`.
 - Runtime secrets and local database settings live in `backend/.env`; examples live in
   `backend/.env.example`.
+
+## Market Data Integration
+
+- KIS Open API is the active quote provider.
+- `GET /quotes/kis/watchlist` returns the focused live quote list for NVIDIA, Micron, Sandisk,
+  Samsung Electronics, and SK Hynix.
+- Frontend development is served on `http://localhost:3001` for this app.

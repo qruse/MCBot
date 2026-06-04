@@ -30,6 +30,8 @@ Current market data is sample data only. Live brokerage or market data APIs are 
 
 The backend is configured to use MongoDB as the primary NoSQL store for new persisted records.
 Local development expects MongoDB at `mongodb://localhost:27017` with database name `mcbot`.
+Korea Investment Securities Open API is used for the focused live quote watchlist: NVIDIA,
+Micron, Sandisk, Samsung Electronics, and SK Hynix.
 
 ## Planned Features
 
@@ -62,12 +64,13 @@ Backend URLs:
 - `http://127.0.0.1:8000/`
 - `http://127.0.0.1:8000/health`
 - `http://127.0.0.1:8000/docs`
+- `http://127.0.0.1:8000/quotes/kis/watchlist`
 
 Create `backend/.env` for local MongoDB and brokerage API settings:
 
 ```env
 APP_ENV=development
-FRONTEND_ORIGIN=http://localhost:3000
+FRONTEND_ORIGIN=http://localhost:3001
 MONGO_URI=mongodb://localhost:27017
 MONGO_DB_NAME=mcbot
 MONGO_TIMEOUT_MS=2000
@@ -81,10 +84,10 @@ KIS_APP_SECRET=your-kis-app-secret
 ```powershell
 cd frontend
 npm install
-npm run dev
+npm run dev -- --port 3001
 ```
 
-Open `http://localhost:3000`.
+Open `http://localhost:3001`.
 
 To change the backend API URL, create `frontend/.env.local`:
 

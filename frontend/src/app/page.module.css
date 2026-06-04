@@ -307,8 +307,15 @@
 
 .marketStatus {
   display: grid;
+  grid-template-columns: 1fr auto;
   gap: 3px;
   min-width: 118px;
+}
+
+.marketStatus > span,
+.marketStatus strong,
+.marketStatus small {
+  grid-column: 1;
 }
 
 .marketStatus strong {
@@ -331,6 +338,22 @@
   color: #c4b5fd;
   font-size: 11px;
   font-weight: 850;
+}
+
+.refreshButton {
+  display: inline-flex;
+  grid-column: 2;
+  grid-row: 1 / span 3;
+  width: 34px;
+  height: 34px;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  border: 1px solid rgba(167, 139, 250, 0.24);
+  border-radius: 8px;
+  background: rgba(6, 3, 13, 0.68);
+  color: #ddd6fe;
+  cursor: pointer;
 }
 
 .workspace {
@@ -506,6 +529,38 @@
   color: #ffffff;
   font-size: 17px;
   line-height: 1.25;
+}
+
+.sourceMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin: -2px 0 12px;
+}
+
+.sourceMeta span,
+.dataAlert {
+  border: 1px solid rgba(196, 181, 253, 0.12);
+  border-radius: 8px;
+  background: rgba(8, 4, 18, 0.46);
+  color: #c4b5fd;
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.sourceMeta span {
+  padding: 7px 9px;
+}
+
+.dataAlert {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 9px;
+  border-color: rgba(251, 113, 133, 0.24);
+  color: #fda4af;
+  padding: 9px 10px;
+  line-height: 1.4;
 }
 
 .chartControls {
@@ -793,6 +848,7 @@
   .watchButton:hover,
   .watchButtonActive:hover,
   .marketTab:hover,
+  .refreshButton:hover,
   .rangeTabs button:hover,
   .chartTypeTabs button:hover {
     border-color: rgba(167, 139, 250, 0.58);

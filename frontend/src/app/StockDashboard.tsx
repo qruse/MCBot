@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  AlertCircle,
   BarChart3,
   Bell,
   Briefcase,
@@ -8,6 +9,7 @@ import {
   Home,
   LineChart,
   Plus,
+  RefreshCw,
   Search,
   Settings,
   Star,
@@ -16,7 +18,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import styles from "./page.module.css";
 
@@ -34,12 +36,49 @@ type Stock = {
   currency: "USD" | "KRW";
   price: number;
   change: number;
+  changeAmount?: number;
+  open?: number | null;
+  high?: number | null;
+  low?: number | null;
+  volume?: number | null;
+  fetchedAt?: string;
+  source?: string;
   sector: string;
   sectorKo: string;
   signal: "Buy" | "Watch" | "Hold";
   strategy: string;
   series: Record<RangeKey, number[]>;
 };
+
+type KisQuote = {
+  symbol: string;
+  name: string;
+  local_name: string;
+  market: string;
+  region: MarketScope;
+  currency: "USD" | "KRW";
+  price: number;
+  change_amount: number;
+  change: number;
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  volume: number | null;
+  sector: string;
+  sector_ko: string;
+  source: string;
+  fetched_at: string;
+};
+
+type KisWatchlistResponse = {
+  source: string;
+  environment: string;
+  count: number;
+  data: KisQuote[];
+  errors: string[];
+};
+
+type DataStatus = "idle" | "loading" | "ready" | "error";
 
 type Candle = {
   open: number;
@@ -63,6 +102,11 @@ const copy = {
     market: "Market",
     open: "Open",
     dataMode: "Sample data",
+    liveDataMode: "KIS live quotes",
+    loadingQuotes: "Loading quotes",
+    quoteError: "Quote sync error",
+    refreshQuotes: "Refresh quotes",
+    updated: "Updated",
     deskMode: "Research desk",
     rangeMove: "Range move",
     rangeHigh: "Range high",
@@ -127,6 +171,11 @@ const copy = {
     market: "\uC2DC\uC7A5",
     open: "\uC5F4\uB9BC",
     dataMode: "\uC0D8\uD50C \uB370\uC774\uD130",
+    liveDataMode: "KIS \uC2E4\uC81C \uC2DC\uC138",
+    loadingQuotes: "\uC2DC\uC138 \uBD88\uB7EC\uC624\uB294 \uC911",
+    quoteError: "\uC2DC\uC138 \uC5F0\uB3D9 \uC624\uB958",
+    refreshQuotes: "\uC2DC\uC138 \uC0C8\uB85C\uACE0\uCE68",
+    updated: "\uAC31\uC2E0",
     deskMode: "\uB9AC\uC11C\uCE58 \uB370\uC2A4\uD06C",
     rangeMove: "\uAE30\uAC04 \uB4F1\uB77D",
     rangeHigh: "\uAE30\uAC04 \uACE0\uAC00",
@@ -199,66 +248,54 @@ function makeSeries(values: number[]): Record<RangeKey, number[]> {
   };
 }
 
-const stocks: Stock[] = [
-  {
-    symbol: "AAPL",
-    name: "Apple Inc.",
-    localName: "Apple Inc.",
-    market: "NASDAQ",
-    region: "overseas",
-    currency: "USD",
-    price: 214.42,
-    change: 1.84,
-    sector: "Consumer Tech",
-    sectorKo: "\uC18C\uBE44\uC790 \uAE30\uC220",
-    signal: "Buy",
-    strategy: "Trend Following",
-    series: makeSeries([211.2, 211.8, 212.4, 212.1, 213.2, 213.8, 214.42]),
-  },
+const fallbackStocks: Stock[] = [
   {
     symbol: "NVDA",
     name: "NVIDIA Corp.",
-    localName: "NVIDIA Corp.",
+    localName: "\uC5D4\uBE44\uB514\uC544",
     market: "NASDAQ",
     region: "overseas",
     currency: "USD",
-    price: 142.65,
-    change: 3.18,
+    price: 214.75,
+    change: -3.62,
+    changeAmount: -8.07,
     sector: "Semiconductors",
     sectorKo: "\uBC18\uB3C4\uCCB4",
-    signal: "Buy",
-    strategy: "Momentum",
-    series: makeSeries([136.8, 138.1, 137.7, 140.2, 141.4, 141.9, 142.65]),
-  },
-  {
-    symbol: "TSLA",
-    name: "Tesla Inc.",
-    localName: "Tesla Inc.",
-    market: "NASDAQ",
-    region: "overseas",
-    currency: "USD",
-    price: 184.21,
-    change: -1.27,
-    sector: "Automotive",
-    sectorKo: "\uC790\uB3D9\uCC28",
     signal: "Watch",
-    strategy: "Mean Reversion",
-    series: makeSeries([187.4, 186.5, 185.8, 186.1, 184.9, 184.4, 184.21]),
+    strategy: "Momentum",
+    series: makeSeries([222.82, 220.5, 218.1, 216.2, 215.8, 214.9, 214.75]),
   },
   {
-    symbol: "MSFT",
-    name: "Microsoft Corp.",
-    localName: "Microsoft Corp.",
+    symbol: "MU",
+    name: "Micron Technology Inc.",
+    localName: "\uB9C8\uC774\uD06C\uB860",
     market: "NASDAQ",
     region: "overseas",
     currency: "USD",
-    price: 498.37,
-    change: 0.72,
-    sector: "Cloud Software",
-    sectorKo: "\uD074\uB77C\uC6B0\uB4DC \uC18C\uD504\uD2B8\uC6E8\uC5B4",
+    price: 1079.57,
+    change: 1.45,
+    changeAmount: 15.47,
+    sector: "Memory Chips",
+    sectorKo: "\uBA54\uBAA8\uB9AC \uBC18\uB3C4\uCCB4",
     signal: "Hold",
-    strategy: "Quality Growth",
-    series: makeSeries([494.2, 495.8, 497.1, 496.6, 497.8, 498.1, 498.37]),
+    strategy: "Memory Cycle",
+    series: makeSeries([1064.1, 1068.2, 1071.4, 1077.6, 1082.8, 1075.4, 1079.57]),
+  },
+  {
+    symbol: "SNDK",
+    name: "Sandisk Corp.",
+    localName: "\uC0CC\uB514\uC2A4\uD06C",
+    market: "NASDAQ",
+    region: "overseas",
+    currency: "USD",
+    price: 1831.5,
+    change: 6.71,
+    changeAmount: 115.14,
+    sector: "Storage",
+    sectorKo: "\uC2A4\uD1A0\uB9AC\uC9C0",
+    signal: "Buy",
+    strategy: "NAND Supply",
+    series: makeSeries([1716.36, 1744.8, 1761.2, 1805.4, 1842.6, 1824.2, 1831.5]),
   },
   {
     symbol: "005930",
@@ -267,13 +304,14 @@ const stocks: Stock[] = [
     market: "KOSPI",
     region: "domestic",
     currency: "KRW",
-    price: 73500,
-    change: 0.55,
+    price: 355500,
+    change: -1.39,
+    changeAmount: -5000,
     sector: "Semiconductors",
     sectorKo: "\uBC18\uB3C4\uCCB4",
     signal: "Watch",
     strategy: "Cycle Recovery",
-    series: makeSeries([72700, 72900, 73100, 73000, 73400, 73300, 73500]),
+    series: makeSeries([360500, 349000, 348000, 356000, 366000, 360000, 355500]),
   },
   {
     symbol: "000660",
@@ -282,32 +320,95 @@ const stocks: Stock[] = [
     market: "KOSPI",
     region: "domestic",
     currency: "KRW",
-    price: 198700,
-    change: 2.42,
+    price: 2293000,
+    change: -2.84,
+    changeAmount: -67000,
     sector: "Memory Chips",
     sectorKo: "\uBA54\uBAA8\uB9AC \uBC18\uB3C4\uCCB4",
-    signal: "Buy",
+    signal: "Watch",
     strategy: "Momentum",
-    series: makeSeries([193500, 194800, 196200, 195900, 197100, 198200, 198700]),
-  },
-  {
-    symbol: "035420",
-    name: "NAVER",
-    localName: "\uB124\uC774\uBC84",
-    market: "KOSPI",
-    region: "domestic",
-    currency: "KRW",
-    price: 184500,
-    change: -0.88,
-    sector: "Internet Platform",
-    sectorKo: "\uC778\uD130\uB137 \uD50C\uB7AB\uD3FC",
-    signal: "Hold",
-    strategy: "Range Breakout",
-    series: makeSeries([186000, 185700, 185100, 184200, 184900, 184100, 184500]),
+    series: makeSeries([2360000, 2284000, 2262000, 2295000, 2327000, 2310000, 2293000]),
   },
 ];
 
-const initialWatchlist = ["AAPL", "NVDA", "005930", "000660"];
+const initialWatchlist = ["NVDA", "MU", "SNDK", "005930", "000660"];
+const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+
+function stockSignal(change: number): Stock["signal"] {
+  if (change >= 2) {
+    return "Buy";
+  }
+
+  if (change <= -1) {
+    return "Watch";
+  }
+
+  return "Hold";
+}
+
+function buildLiveSeries(quote: KisQuote) {
+  const previousClose = quote.price - quote.change_amount;
+  const open = quote.open ?? previousClose;
+  const high = quote.high ?? Math.max(previousClose, quote.price) * 1.006;
+  const low = quote.low ?? Math.min(previousClose, quote.price) * 0.994;
+
+  return makeSeries([
+    previousClose,
+    open,
+    low,
+    (open + quote.price) / 2,
+    high,
+    quote.price - quote.change_amount * 0.18,
+    quote.price,
+  ]);
+}
+
+function stockFromKisQuote(quote: KisQuote): Stock {
+  return {
+    symbol: quote.symbol,
+    name: quote.name,
+    localName: quote.local_name,
+    market: quote.market,
+    region: quote.region,
+    currency: quote.currency,
+    price: quote.price,
+    change: quote.change,
+    changeAmount: quote.change_amount,
+    open: quote.open,
+    high: quote.high,
+    low: quote.low,
+    volume: quote.volume,
+    fetchedAt: quote.fetched_at,
+    source: quote.source,
+    sector: quote.sector,
+    sectorKo: quote.sector_ko,
+    signal: stockSignal(quote.change),
+    strategy: "KIS Quote Sync",
+    series: buildLiveSeries(quote),
+  };
+}
+
+function formatCompactNumber(value: number | null | undefined, language: Language) {
+  if (!value) {
+    return "-";
+  }
+
+  return value.toLocaleString(language === "ko" ? "ko-KR" : "en-US", {
+    maximumFractionDigits: 0,
+  });
+}
+
+function formatFetchedAt(value: string | undefined, language: Language) {
+  if (!value) {
+    return "-";
+  }
+
+  return new Intl.DateTimeFormat(language === "ko" ? "ko-KR" : "en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(new Date(value));
+}
 
 function stockName(stock: Stock, language: Language) {
   return language === "ko" ? stock.localName : stock.name;
@@ -388,16 +489,21 @@ export default function StockDashboard() {
   const [query, setQuery] = useState("");
   const [marketScope, setMarketScope] = useState<MarketScope>("overseas");
   const [language, setLanguage] = useState<Language>("ko");
-  const [selectedSymbol, setSelectedSymbol] = useState("AAPL");
+  const [selectedSymbol, setSelectedSymbol] = useState("NVDA");
   const [watchlist, setWatchlist] = useState(initialWatchlist);
   const [range, setRange] = useState<RangeKey>("LIVE");
   const [chartType, setChartType] = useState<ChartType>("candle");
   const [activePoint, setActivePoint] = useState<number | null>(null);
+  const [liveStocks, setLiveStocks] = useState<Stock[]>([]);
+  const [dataStatus, setDataStatus] = useState<DataStatus>("idle");
+  const [dataError, setDataError] = useState("");
+  const [refreshKey, setRefreshKey] = useState(0);
 
   const t = copy[language];
+  const stocks = liveStocks.length ? liveStocks : fallbackStocks;
   const marketStocks = useMemo(
     () => stocks.filter((stock) => stock.region === marketScope),
-    [marketScope],
+    [marketScope, stocks],
   );
   const filteredStocks = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -412,6 +518,53 @@ export default function StockDashboard() {
       ),
     );
   }, [marketStocks, query]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    async function loadQuotes() {
+      setDataStatus((currentStatus) => (currentStatus === "idle" ? "loading" : currentStatus));
+      setDataError("");
+
+      try {
+        const response = await fetch(`${apiBaseUrl}/quotes/kis/watchlist`, {
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          const payload = (await response.json().catch(() => null)) as { detail?: string } | null;
+          throw new Error(payload?.detail ?? `KIS quote request failed: ${response.status}`);
+        }
+
+        const payload = (await response.json()) as KisWatchlistResponse;
+        const nextStocks = payload.data.map(stockFromKisQuote);
+
+        if (nextStocks.length) {
+          setLiveStocks(nextStocks);
+          setDataStatus(payload.errors.length ? "error" : "ready");
+          setDataError(payload.errors.join(" / "));
+        } else {
+          setDataStatus("error");
+          setDataError(payload.errors.join(" / ") || "No KIS quote data returned.");
+        }
+      } catch (error) {
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        setDataStatus("error");
+        setDataError(error instanceof Error ? error.message : "KIS quote request failed.");
+      }
+    }
+
+    loadQuotes();
+    const intervalId = window.setInterval(loadQuotes, 30000);
+
+    return () => {
+      controller.abort();
+      window.clearInterval(intervalId);
+    };
+  }, [refreshKey]);
 
   const selectedStock =
     stocks.find((stock) => stock.symbol === selectedSymbol && stock.region === marketScope) ??
@@ -444,10 +597,28 @@ export default function StockDashboard() {
     .filter((stock): stock is Stock => Boolean(stock))
     .filter((stock) => stock.region === marketScope);
   const isWatched = watchlist.includes(selectedStock.symbol);
+  const latestFetchedAt = stocks.find((stock) => stock.fetchedAt)?.fetchedAt;
+  const dataModeLabel =
+    dataStatus === "loading"
+      ? t.loadingQuotes
+      : dataStatus === "error"
+        ? t.quoteError
+        : liveStocks.length
+          ? t.liveDataMode
+          : t.dataMode;
   const marketFeed = [
-    { label: "KOSPI", value: "2,720.64", change: "+1.12", positive: true },
-    { label: "NASDAQ", value: "17,857.02", change: "+0.84", positive: true },
-    { label: "USD/KRW", value: "1,363.50", change: "-0.21", positive: false },
+    {
+      label: "KIS",
+      value: liveStocks.length ? `${liveStocks.length} synced` : "sample fallback",
+      change: dataStatus === "error" ? "ERR" : "LIVE",
+      positive: dataStatus !== "error",
+    },
+    ...stocks.slice(0, 2).map((stock) => ({
+      label: stock.symbol,
+      value: formatPrice(stock),
+      change: `${stock.change > 0 ? "+" : ""}${stock.change.toFixed(2)}%`,
+      positive: stock.change >= 0,
+    })),
   ];
   const navItems = [
     { label: t.home, icon: Home },
@@ -544,7 +715,7 @@ export default function StockDashboard() {
                 <span>{feed.label}</span>
                 <strong>{feed.value}</strong>
                 <small className={feed.positive ? styles.positive : styles.negative}>
-                  {feed.change}%
+                  {feed.change}
                 </small>
               </div>
             ))}
@@ -604,7 +775,15 @@ export default function StockDashboard() {
               <span aria-hidden="true" />
               {t.open}
             </strong>
-            <small>{t.dataMode}</small>
+            <small>{dataModeLabel}</small>
+            <button
+              className={styles.refreshButton}
+              type="button"
+              onClick={() => setRefreshKey((currentKey) => currentKey + 1)}
+              aria-label={t.refreshQuotes}
+            >
+              <RefreshCw size={14} />
+            </button>
           </div>
         </section>
 
@@ -618,6 +797,12 @@ export default function StockDashboard() {
                 </strong>
               </div>
             </div>
+            {dataStatus === "error" && dataError ? (
+              <div className={styles.dataAlert}>
+                <AlertCircle size={16} />
+                <span>{dataError}</span>
+              </div>
+            ) : null}
             <div className={styles.stockList}>
               {filteredStocks.length ? (
                 filteredStocks.map((stock) => (
@@ -680,6 +865,13 @@ export default function StockDashboard() {
                 <span>{t.sector}</span>
                 <strong>{sectorName(selectedStock, language)}</strong>
               </div>
+            </div>
+            <div className={styles.sourceMeta}>
+              <span>{selectedStock.source ?? "Sample data"}</span>
+              <span>
+                {t.updated} {formatFetchedAt(selectedStock.fetchedAt ?? latestFetchedAt, language)}
+              </span>
+              <span>Volume {formatCompactNumber(selectedStock.volume, language)}</span>
             </div>
 
             <div className={styles.chartControls}>

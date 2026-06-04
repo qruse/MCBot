@@ -85,6 +85,27 @@ npm run build
 npm audit
 ```
 
+## Docker Compose
+
+The production-style local stack runs Next.js and FastAPI behind nginx.
+
+```powershell
+docker compose build
+docker compose up -d
+```
+
+Open:
+
+- App: `http://localhost:8080`
+- API health: `http://localhost:8080/api/health`
+- API docs: `http://localhost:8080/api/docs`
+
+Stop the stack:
+
+```powershell
+docker compose down
+```
+
 ## Safety Notes
 
 Automated trading can create real financial risk. Live trading features should be added only after

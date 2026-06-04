@@ -15,7 +15,7 @@ The repository currently contains the first development environment setup:
 - `artifacts/`: generated deliverables
 - `tmps/`: temporary files
 
-The frontend home screen includes a dark navy stock dashboard prototype with:
+The frontend home screen includes a dark violet stock dashboard prototype with:
 
 - Domestic and overseas market tabs
 - English and Korean language selection
@@ -24,6 +24,7 @@ The frontend home screen includes a dark navy stock dashboard prototype with:
 - Interactive SVG price chart with candlestick and line modes
 - Chart ranges: today live, 1D, 1W, 1M, 1Y, 5Y, and all
 - Portfolio signal and research note preview panels
+- Dark trading-desk layout with a market ticker, chart summary, and automation status rail
 
 Current market data is sample data only. Live brokerage or market data APIs are not connected yet.
 

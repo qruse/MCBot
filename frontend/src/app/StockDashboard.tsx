@@ -63,6 +63,15 @@ const copy = {
     market: "Market",
     open: "Open",
     dataMode: "Sample data",
+    deskMode: "Research desk",
+    rangeMove: "Range move",
+    rangeHigh: "Range high",
+    rangeLow: "Range low",
+    executionMode: "Execution",
+    paperOnly: "Paper only",
+    signalQueue: "Signal queue",
+    dataBridge: "Data bridge",
+    manualReview: "Manual review",
     home: "Home",
     portfolio: "Portfolio",
     signals: "Signals",
@@ -118,6 +127,15 @@ const copy = {
     market: "\uC2DC\uC7A5",
     open: "\uC5F4\uB9BC",
     dataMode: "\uC0D8\uD50C \uB370\uC774\uD130",
+    deskMode: "\uB9AC\uC11C\uCE58 \uB370\uC2A4\uD06C",
+    rangeMove: "\uAE30\uAC04 \uB4F1\uB77D",
+    rangeHigh: "\uAE30\uAC04 \uACE0\uAC00",
+    rangeLow: "\uAE30\uAC04 \uC800\uAC00",
+    executionMode: "\uC2E4\uD589 \uBAA8\uB4DC",
+    paperOnly: "\uBAA8\uC758 \uC804\uC6A9",
+    signalQueue: "\uC2DC\uADF8\uB110 \uD050",
+    dataBridge: "\uB370\uC774\uD130 \uBE0C\uB9AC\uC9C0",
+    manualReview: "\uC218\uB3D9 \uAC80\uD1A0",
     home: "\uD648",
     portfolio: "\uD3EC\uD2B8\uD3F4\uB9AC\uC624",
     signals: "\uC2DC\uADF8\uB110",
@@ -402,6 +420,11 @@ export default function StockDashboard() {
   const selectedCandles = buildCandles(selectedValues);
   const selectedIndex = activePoint ?? selectedValues.length - 1;
   const selectedPointValue = selectedValues[selectedIndex];
+  const rangeStart = selectedValues[0];
+  const rangeEnd = selectedValues[selectedValues.length - 1];
+  const rangeMove = ((rangeEnd - rangeStart) / rangeStart) * 100;
+  const rangeHigh = Math.max(...selectedValues);
+  const rangeLow = Math.min(...selectedValues);
   const chartWidth = 820;
   const chartHeight = 310;
   const chartPadding = 28;
@@ -421,6 +444,11 @@ export default function StockDashboard() {
     .filter((stock): stock is Stock => Boolean(stock))
     .filter((stock) => stock.region === marketScope);
   const isWatched = watchlist.includes(selectedStock.symbol);
+  const marketFeed = [
+    { label: "KOSPI", value: "2,720.64", change: "+1.12", positive: true },
+    { label: "NASDAQ", value: "17,857.02", change: "+0.84", positive: true },
+    { label: "USD/KRW", value: "1,363.50", change: "-0.21", positive: false },
+  ];
   const navItems = [
     { label: t.home, icon: Home },
     { label: t.portfolio, icon: Briefcase },
@@ -466,8 +494,11 @@ export default function StockDashboard() {
     <main className={styles.appShell}>
       <aside className={styles.sidebar} aria-label="MCBot navigation">
         <div className={styles.brandBlock}>
-          <strong>MCBot</strong>
-          <span>{t.appName}</span>
+          <div className={styles.brandMark}>MC</div>
+          <div>
+            <strong>MCBot</strong>
+            <span>{t.appName}</span>
+          </div>
         </div>
         <nav className={styles.navList}>
           {navItems.map((item, index) => {
@@ -493,6 +524,10 @@ export default function StockDashboard() {
             <span>{t.buyingPower}</span>
             <strong>{marketScope === "domestic" ? "12,450,000 KRW" : "$42,880"}</strong>
           </div>
+          <div>
+            <span>{t.executionMode}</span>
+            <strong>{t.paperOnly}</strong>
+          </div>
         </div>
       </aside>
 
@@ -502,6 +537,17 @@ export default function StockDashboard() {
             <span className={styles.productName}>MCBot</span>
             <h1>{t.appName}</h1>
             <p>{t.appSubtitle}</p>
+          </div>
+          <div className={styles.marketTicker} aria-label="Market overview">
+            {marketFeed.map((feed) => (
+              <div key={feed.label}>
+                <span>{feed.label}</span>
+                <strong>{feed.value}</strong>
+                <small className={feed.positive ? styles.positive : styles.negative}>
+                  {feed.change}%
+                </small>
+              </div>
+            ))}
           </div>
           <div className={styles.headerActions}>
             <label className={styles.languageSelect}>
@@ -603,7 +649,9 @@ export default function StockDashboard() {
           <div className={styles.chartPanel}>
             <div className={styles.chartHeader}>
               <div>
-                <span>{selectedStock.market}</span>
+                <span>
+                  {selectedStock.market} / {t.deskMode}
+                </span>
                 <h2>
                   {selectedStock.symbol}
                   <small>{stockName(selectedStock, language)}</small>
@@ -675,8 +723,8 @@ export default function StockDashboard() {
               >
                 <defs>
                   <linearGradient id="priceArea" x1="0" x2="0" y1="0" y2="1">
-                    <stop offset="0%" stopColor="#38bdf8" stopOpacity="0.28" />
-                    <stop offset="68%" stopColor="#22c55e" stopOpacity="0.1" />
+                    <stop offset="0%" stopColor="#a78bfa" stopOpacity="0.3" />
+                    <stop offset="68%" stopColor="#8b5cf6" stopOpacity="0.1" />
                     <stop offset="100%" stopColor="#22c55e" stopOpacity="0" />
                   </linearGradient>
                 </defs>
@@ -760,6 +808,36 @@ export default function StockDashboard() {
                 </strong>
               </div>
             </div>
+
+            <div className={styles.chartFoot}>
+              <div>
+                <span>{t.rangeMove}</span>
+                <strong className={rangeMove >= 0 ? styles.positive : styles.negative}>
+                  {rangeMove >= 0 ? "+" : ""}
+                  {rangeMove.toFixed(2)}%
+                </strong>
+              </div>
+              <div>
+                <span>{t.rangeHigh}</span>
+                <strong>
+                  {selectedStock.currency === "KRW"
+                    ? rangeHigh.toLocaleString("ko-KR")
+                    : rangeHigh.toFixed(2)}
+                </strong>
+              </div>
+              <div>
+                <span>{t.rangeLow}</span>
+                <strong>
+                  {selectedStock.currency === "KRW"
+                    ? rangeLow.toLocaleString("ko-KR")
+                    : rangeLow.toFixed(2)}
+                </strong>
+              </div>
+              <div>
+                <span>{t.signalQueue}</span>
+                <strong>{signalLabel(selectedStock.signal, language)}</strong>
+              </div>
+            </div>
           </div>
 
           <aside className={styles.watchPanel} aria-labelledby="watch-title">
@@ -795,6 +873,10 @@ export default function StockDashboard() {
               <div>
                 <strong>{t.automationPreview}</strong>
                 <p>{t.automationText}</p>
+                <div className={styles.automationSteps}>
+                  <span>{t.dataBridge}</span>
+                  <span>{t.manualReview}</span>
+                </div>
               </div>
             </div>
           </aside>

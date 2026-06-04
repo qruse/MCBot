@@ -28,6 +28,9 @@ The frontend home screen includes a dark violet stock dashboard prototype with:
 
 Current market data is sample data only. Live brokerage or market data APIs are not connected yet.
 
+The backend is configured to use MongoDB as the primary NoSQL store for new persisted records.
+Local development expects MongoDB at `mongodb://localhost:27017` with database name `mcbot`.
+
 ## Planned Features
 
 - Brokerage account integration
@@ -59,6 +62,19 @@ Backend URLs:
 - `http://127.0.0.1:8000/`
 - `http://127.0.0.1:8000/health`
 - `http://127.0.0.1:8000/docs`
+
+Create `backend/.env` for local MongoDB and brokerage API settings:
+
+```env
+APP_ENV=development
+FRONTEND_ORIGIN=http://localhost:3000
+MONGO_URI=mongodb://localhost:27017
+MONGO_DB_NAME=mcbot
+MONGO_TIMEOUT_MS=2000
+KIS_ENV=paper
+KIS_APP_KEY=your-kis-app-key
+KIS_APP_SECRET=your-kis-app-secret
+```
 
 ## Frontend
 

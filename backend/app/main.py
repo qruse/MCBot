@@ -4,11 +4,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from app.database import ping_mongo
+
 
 class HealthResponse(BaseModel):
     status: str
     service: str
     version: str
+    database: dict[str, str]
 
 
 app = FastAPI(
@@ -42,8 +45,11 @@ def read_root() -> dict[str, str]:
 
 @app.get("/health", response_model=HealthResponse)
 def read_health() -> HealthResponse:
+    database = ping_mongo()
+
     return HealthResponse(
-        status="ok",
+        status="ok" if database["status"] == "ok" else "degraded",
         service="mcbot-backend",
         version=app.version,
+        database=database,
     )

@@ -23,3 +23,11 @@ python -m pytest
 - `GET /`: backend status message
 - `GET /health`: health-check response
 - `GET /docs`: FastAPI Swagger documentation
+- `GET /quotes/kis/watchlist`: latest KIS watchlist quotes persisted by the background MongoDB
+  refresh scheduler
+
+## Market Data Scheduler
+
+The backend starts a background KIS quote refresh loop during FastAPI startup. It refreshes the
+watchlist every `MARKET_DATA_REFRESH_SECONDS` seconds, stores the latest quote per symbol in
+`market_quote_latest`, and appends each refresh point to `market_quote_history`.

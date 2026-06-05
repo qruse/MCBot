@@ -715,7 +715,7 @@ export default function StockDashboard() {
     }
 
     loadQuotes();
-    const intervalId = window.setInterval(loadQuotes, 30000);
+    const intervalId = window.setInterval(loadQuotes, 10000);
 
     return () => {
       controller.abort();

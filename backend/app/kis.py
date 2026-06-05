@@ -310,11 +310,15 @@ async def _fetch_overseas_quote(
     return _overseas_quote_from_payload(symbol, payload.get("output") or {})
 
 
-async def get_watchlist_quotes() -> KisWatchlistResponse:
+async def get_watchlist_quotes(force_refresh: bool = False) -> KisWatchlistResponse:
     global _quote_cache
 
     now = time.monotonic()
-    if _quote_cache and now - _quote_cache[0] < KIS_QUOTE_CACHE_TTL_SECONDS:
+    if (
+        not force_refresh
+        and _quote_cache
+        and now - _quote_cache[0] < KIS_QUOTE_CACHE_TTL_SECONDS
+    ):
         return _quote_cache[1]
 
     quotes: list[KisQuote] = []

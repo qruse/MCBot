@@ -65,7 +65,7 @@ def test_read_kis_watchlist_quotes() -> None:
             "errors": [],
         }
 
-    main.get_watchlist_quotes = fake_watchlist_quotes
+    main.get_latest_or_refresh_watchlist_quotes = fake_watchlist_quotes
 
     response = client.get("/quotes/kis/watchlist")
 

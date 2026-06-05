@@ -1,11 +1,18 @@
 import os
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from app.database import ping_mongo
-from app.kis import KisServiceError, KisWatchlistResponse, get_watchlist_quotes
+from app.kis import KisServiceError, KisWatchlistResponse
+from app.market_data import (
+    get_latest_or_refresh_watchlist_quotes,
+    start_market_data_scheduler,
+    stop_market_data_scheduler,
+)
 
 
 class HealthResponse(BaseModel):
@@ -15,11 +22,22 @@ class HealthResponse(BaseModel):
     database: dict[str, str]
 
 
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    await start_market_data_scheduler()
+
+    try:
+        yield
+    finally:
+        await stop_market_data_scheduler()
+
+
 app = FastAPI(
     title="MCBot Backend",
     description="Money Copy Bot API",
     version="0.1.0",
     root_path=os.getenv("ROOT_PATH", ""),
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -61,6 +79,6 @@ def read_health() -> HealthResponse:
 @app.get("/quotes/kis/watchlist", response_model=KisWatchlistResponse)
 async def read_kis_watchlist_quotes() -> KisWatchlistResponse:
     try:
-        return await get_watchlist_quotes()
+        return await get_latest_or_refresh_watchlist_quotes()
     except KisServiceError as error:
         raise HTTPException(status_code=error.status_code, detail=error.message) from error

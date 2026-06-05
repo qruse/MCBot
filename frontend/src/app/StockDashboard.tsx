@@ -752,8 +752,8 @@ export default function StockDashboard() {
     (tick) => chartMax - ((chartMax - chartMin) * tick) / 3,
   );
   const candleWidth = Math.max(
-    5,
-    Math.min(14, ((chartWidth - chartPadding * 2) / selectedCandles.length) * 0.55),
+    3,
+    Math.min(9, ((chartWidth - chartPadding * 2) / selectedCandles.length) * 0.48),
   );
   const activeCoordinates = pointFor(
     selectedPoints,
@@ -1165,7 +1165,7 @@ export default function StockDashboard() {
                             y={bodyTop}
                             width={candleWidth}
                             height={bodyHeight}
-                            rx="2.5"
+                            rx="0.5"
                           />
                         </g>
                       );

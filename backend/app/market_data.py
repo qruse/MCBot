@@ -4,7 +4,7 @@ import asyncio
 import logging
 import os
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
@@ -13,6 +13,9 @@ from pymongo import ASCENDING, DESCENDING, UpdateOne
 from app.database import get_collection
 from app.kis import (
     WATCHLIST_SYMBOLS,
+    ChartRange,
+    KisChartCandle,
+    KisChartResponse,
     KisQuote,
     KisServiceError,
     KisWatchlistResponse,
@@ -59,6 +62,67 @@ def _quote_document(quote: KisQuote, refresh_id: str, stored_at: datetime) -> di
     document["stored_at"] = stored_at
 
     return document
+
+
+def _live_chart_window(range_key: ChartRange) -> tuple[datetime, int]:
+    now = _utc_now()
+
+    if range_key == "LIVE":
+        return now - timedelta(hours=2), 60
+
+    return now - timedelta(hours=24), 300
+
+
+def _bucket_timestamp(value: datetime, bucket_seconds: int) -> datetime:
+    utc_value = _as_utc(value)
+    epoch_seconds = int(utc_value.timestamp())
+    bucket_epoch = epoch_seconds - (epoch_seconds % bucket_seconds)
+
+    return datetime.fromtimestamp(bucket_epoch, tz=UTC)
+
+
+def _live_chart_from_documents(
+    symbol: str,
+    range_key: ChartRange,
+    documents: list[dict[str, Any]],
+) -> KisChartResponse:
+    _, bucket_seconds = _live_chart_window(range_key)
+    buckets: dict[datetime, list[float]] = {}
+
+    for document in documents:
+        price = float(document.get("price") or 0)
+        stored_at = document.get("stored_at")
+
+        if price <= 0 or not isinstance(stored_at, datetime):
+            continue
+
+        bucket_at = _bucket_timestamp(stored_at, bucket_seconds)
+        buckets.setdefault(bucket_at, []).append(price)
+
+    candles = [
+        KisChartCandle(
+            symbol=symbol,
+            timestamp=bucket_at.isoformat(),
+            open=prices[0],
+            high=max(prices),
+            low=min(prices),
+            close=prices[-1],
+            volume=None,
+            source="Mongo scheduled KIS quotes",
+        )
+        for bucket_at, prices in sorted(buckets.items())
+    ]
+
+    return KisChartResponse(
+        source="Mongo scheduled KIS quotes",
+        environment=_kis_environment(),
+        symbol=symbol,
+        range=range_key,
+        interval=f"{bucket_seconds // 60}m",
+        count=len(candles),
+        data=candles,
+        errors=[],
+    )
 
 
 def _persist_response_sync(
@@ -161,6 +225,34 @@ def _latest_snapshot_sync() -> tuple[KisWatchlistResponse, datetime | None]:
         ),
         max(stored_times) if stored_times else None,
     )
+
+
+def _live_chart_response_sync(symbol: str, range_key: ChartRange) -> KisChartResponse:
+    start_at, _ = _live_chart_window(range_key)
+    collection = get_collection(HISTORY_COLLECTION)
+    normalized_symbol = symbol.strip().upper()
+    documents = list(
+        collection.find(
+            {
+                "symbol": normalized_symbol,
+                "stored_at": {"$gte": start_at.replace(tzinfo=None)},
+            },
+            {"_id": False},
+        ).sort("stored_at", ASCENDING)
+    )
+
+    if not documents:
+        latest = get_collection(LATEST_COLLECTION).find_one(
+            {"symbol": normalized_symbol},
+            {"_id": False},
+        )
+        documents = [latest] if latest else []
+
+    return _live_chart_from_documents(normalized_symbol, range_key, documents)
+
+
+async def get_live_chart_history(symbol: str, range_key: ChartRange) -> KisChartResponse:
+    return await asyncio.to_thread(_live_chart_response_sync, symbol, range_key)
 
 
 async def refresh_market_data() -> KisWatchlistResponse:

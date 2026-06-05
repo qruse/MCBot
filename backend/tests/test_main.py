@@ -72,3 +72,36 @@ def test_read_kis_watchlist_quotes() -> None:
     assert response.status_code == 200
     assert response.json()["count"] == 1
     assert response.json()["data"][0]["symbol"] == "NVDA"
+
+
+def test_read_kis_watchlist_history_live() -> None:
+    async def fake_live_chart_history(symbol: str, range_key: str) -> dict[str, object]:
+        return {
+            "source": "Mongo scheduled KIS quotes",
+            "environment": "paper",
+            "symbol": symbol,
+            "range": range_key,
+            "interval": "1m",
+            "count": 1,
+            "data": [
+                {
+                    "symbol": symbol,
+                    "timestamp": "2026-06-05T00:00:00+00:00",
+                    "open": 214.0,
+                    "high": 215.0,
+                    "low": 213.0,
+                    "close": 214.75,
+                    "volume": None,
+                    "source": "Mongo scheduled KIS quotes",
+                }
+            ],
+            "errors": [],
+        }
+
+    main.get_live_chart_history = fake_live_chart_history
+
+    response = client.get("/quotes/kis/history/NVDA?range=LIVE")
+
+    assert response.status_code == 200
+    assert response.json()["symbol"] == "NVDA"
+    assert response.json()["data"][0]["close"] == 214.75

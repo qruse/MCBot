@@ -52,6 +52,7 @@ type Stock = {
 
 type ChartPoint = {
   label: string;
+  timestamp?: string;
   value: number;
   open: number;
   high: number;
@@ -84,6 +85,28 @@ type KisWatchlistResponse = {
   environment: string;
   count: number;
   data: KisQuote[];
+  errors: string[];
+};
+
+type KisHistoryCandle = {
+  symbol: string;
+  timestamp: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number | null;
+  source: string;
+};
+
+type KisHistoryResponse = {
+  source: string;
+  environment: string;
+  symbol: string;
+  range: RangeKey;
+  interval: string;
+  count: number;
+  data: KisHistoryCandle[];
   errors: string[];
 };
 
@@ -349,6 +372,7 @@ function buildChartPoints(values: number[], range: RangeKey): ChartPoint[] {
 
     return {
       label: pointLabel(range, index, count),
+      timestamp: undefined,
       value: close,
       open,
       high,
@@ -510,6 +534,51 @@ function stockFromKisQuote(quote: KisQuote): Stock {
   };
 }
 
+function pointFromHistoryCandle(candle: KisHistoryCandle): ChartPoint {
+  return {
+    label: candle.timestamp,
+    timestamp: candle.timestamp,
+    value: candle.close,
+    open: candle.open,
+    high: candle.high,
+    low: candle.low,
+    close: candle.close,
+  };
+}
+
+function formatChartPointLabel(point: ChartPoint, range: RangeKey, language: Language) {
+  if (!point.timestamp) {
+    return point.label;
+  }
+
+  const date = new Date(point.timestamp);
+
+  if (Number.isNaN(date.getTime())) {
+    return point.label;
+  }
+
+  const locale = language === "ko" ? "ko-KR" : "en-US";
+
+  if (range === "LIVE" || range === "1D") {
+    return new Intl.DateTimeFormat(locale, {
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(date);
+  }
+
+  if (range === "5Y" || range === "ALL") {
+    return new Intl.DateTimeFormat(locale, {
+      year: "2-digit",
+      month: "short",
+    }).format(date);
+  }
+
+  return new Intl.DateTimeFormat(locale, {
+    month: "short",
+    day: "2-digit",
+  }).format(date);
+}
+
 function formatCompactNumber(value: number | null | undefined, language: Language) {
   if (!value) {
     return "-";
@@ -652,6 +721,9 @@ export default function StockDashboard() {
   const [chartType, setChartType] = useState<ChartType>("candle");
   const [activePoint, setActivePoint] = useState<number | null>(null);
   const [liveStocks, setLiveStocks] = useState<Stock[]>([]);
+  const [chartHistory, setChartHistory] = useState<
+    Record<string, Partial<Record<RangeKey, ChartPoint[]>>>
+  >({});
   const [dataStatus, setDataStatus] = useState<DataStatus>("idle");
   const [dataError, setDataError] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
@@ -726,10 +798,68 @@ export default function StockDashboard() {
   const selectedStock =
     stocks.find((stock) => stock.symbol === selectedSymbol && stock.region === marketScope) ??
     marketStocks[0];
-  const selectedPoints = selectedStock.series[range];
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    async function loadChartHistory() {
+      try {
+        const response = await fetch(
+          `${apiBaseUrl}/quotes/kis/history/${selectedStock.symbol}?range=${range}`,
+          { signal: controller.signal },
+        );
+
+        if (!response.ok) {
+          return;
+        }
+
+        const payload = (await response.json()) as KisHistoryResponse;
+        const points = payload.data.map(pointFromHistoryCandle);
+
+        if (!points.length) {
+          return;
+        }
+
+        setChartHistory((currentHistory) => {
+          const historyKey = `${selectedStock.symbol}:${selectedStock.region}`;
+
+          return {
+            ...currentHistory,
+            [historyKey]: {
+              ...currentHistory[historyKey],
+              [range]: points,
+            },
+          };
+        });
+      } catch {
+        if (controller.signal.aborted) {
+          return;
+        }
+      }
+    }
+
+    loadChartHistory();
+
+    const intervalId =
+      range === "LIVE" || range === "1D" ? window.setInterval(loadChartHistory, 10000) : null;
+
+    return () => {
+      controller.abort();
+
+      if (intervalId) {
+        window.clearInterval(intervalId);
+      }
+    };
+  }, [range, selectedStock.region, selectedStock.symbol]);
+
+  const chartHistoryKey = `${selectedStock.symbol}:${selectedStock.region}`;
+  const selectedHistoryPoints = chartHistory[chartHistoryKey]?.[range];
+  const selectedPoints = selectedHistoryPoints?.length
+    ? selectedHistoryPoints
+    : selectedStock.series[range];
   const selectedValues = selectedPoints.map((point) => point.value);
   const selectedCandles = buildCandles(selectedPoints);
-  const selectedIndex = activePoint ?? selectedPoints.length - 1;
+  const selectedIndex = Math.min(activePoint ?? selectedPoints.length - 1, selectedPoints.length - 1);
   const selectedPoint = selectedPoints[selectedIndex];
   const selectedPointValue = selectedPoint.value;
   const rangeStart = selectedValues[0];
@@ -1111,9 +1241,10 @@ export default function StockDashboard() {
                 })}
                 {xAxisIndexes.map((index) => {
                   const x = xFor(index, selectedPoints.length, chartWidth, chartPadding);
+                  const label = formatChartPointLabel(selectedPoints[index], range, language);
 
                   return (
-                    <g key={`${range}-${selectedPoints[index].label}`}>
+                    <g key={`${range}-${selectedPoints[index].timestamp ?? selectedPoints[index].label}`}>
                       <line
                         className={styles.verticalGridLine}
                         x1={x}
@@ -1127,7 +1258,7 @@ export default function StockDashboard() {
                         x={x}
                         y={chartHeight - 8}
                       >
-                        {selectedPoints[index].label}
+                        {label}
                       </text>
                     </g>
                   );
@@ -1191,7 +1322,7 @@ export default function StockDashboard() {
                 style={{ left: `${(activeCoordinates.x / chartWidth) * 100}%` }}
               >
                 <span>
-                  {selectedPoint.label}
+                  {formatChartPointLabel(selectedPoint, range, language)}
                 </span>
                 <strong>
                   {selectedStock.currency === "KRW"

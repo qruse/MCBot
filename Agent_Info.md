@@ -17,9 +17,10 @@ automated trading assistant.
 - `backend/app/database.py`: MongoDB client helpers, database/collection accessors, and ping
   health check using `MONGO_URI`
 - `backend/app/kis.py`: Korea Investment Securities Open API client for the live quote watchlist
-  (`NVDA`, `MU`, `SNDK`, `005930`, `000660`) with token and quote caching
+  (`NVDA`, `MU`, `SNDK`, `005930`, `000660`) with token, quote, and historical chart caching
 - `backend/app/market_data.py`: background 10-second KIS quote refresh scheduler, MongoDB latest
-  quote persistence, quote history persistence, and latest-or-refresh API helper
+  quote persistence, quote history persistence, intraday chart aggregation, and latest-or-refresh
+  API helper
 - `backend/tests/test_main.py`: backend endpoint tests
 - `backend/Dockerfile`: production backend container image
 - `frontend/Dockerfile`: production Next.js standalone container image
@@ -42,6 +43,8 @@ automated trading assistant.
 - KIS Open API is the active quote provider.
 - `GET /quotes/kis/watchlist` returns the focused live quote list for NVIDIA, Micron, Sandisk,
   Samsung Electronics, and SK Hynix.
+- `GET /quotes/kis/history/{symbol}?range=LIVE|1D|1W|1M|1Y|5Y|ALL` returns chart-ready OHLC
+  candles. `LIVE`/`1D` use Mongo scheduled KIS quote history; longer ranges use KIS chart data.
 - FastAPI startup launches a background market data scheduler. It refreshes KIS watchlist quotes
   every `MARKET_DATA_REFRESH_SECONDS` seconds, upserts `market_quote_latest`, and appends
   `market_quote_history` so the service keeps data current even when the frontend is not open.

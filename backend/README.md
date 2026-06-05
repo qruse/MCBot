@@ -25,6 +25,9 @@ python -m pytest
 - `GET /docs`: FastAPI Swagger documentation
 - `GET /quotes/kis/watchlist`: latest KIS watchlist quotes persisted by the background MongoDB
   refresh scheduler
+- `GET /quotes/kis/history/{symbol}?range=LIVE|1D|1W|1M|1Y|5Y|ALL`: chart-ready OHLC candles.
+  `LIVE` and `1D` aggregate MongoDB scheduled quote history; longer ranges download KIS chart
+  data.
 
 ## Market Data Scheduler
 

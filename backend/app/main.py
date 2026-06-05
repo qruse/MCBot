@@ -1,15 +1,23 @@
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Annotated
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from app.database import ping_mongo
-from app.kis import KisServiceError, KisWatchlistResponse
+from app.kis import (
+    ChartRange,
+    KisChartResponse,
+    KisServiceError,
+    KisWatchlistResponse,
+    get_watchlist_chart,
+)
 from app.market_data import (
     get_latest_or_refresh_watchlist_quotes,
+    get_live_chart_history,
     start_market_data_scheduler,
     stop_market_data_scheduler,
 )
@@ -80,5 +88,19 @@ def read_health() -> HealthResponse:
 async def read_kis_watchlist_quotes() -> KisWatchlistResponse:
     try:
         return await get_latest_or_refresh_watchlist_quotes()
+    except KisServiceError as error:
+        raise HTTPException(status_code=error.status_code, detail=error.message) from error
+
+
+@app.get("/quotes/kis/history/{symbol}", response_model=KisChartResponse)
+async def read_kis_watchlist_history(
+    symbol: str,
+    range_key: Annotated[ChartRange, Query(alias="range")] = "LIVE",
+) -> KisChartResponse:
+    try:
+        if range_key in {"LIVE", "1D"}:
+            return await get_live_chart_history(symbol, range_key)
+
+        return await get_watchlist_chart(symbol, range_key)
     except KisServiceError as error:
         raise HTTPException(status_code=error.status_code, detail=error.message) from error

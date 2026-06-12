@@ -21,7 +21,11 @@ test("brokerage dashboard controls work", async ({ page }) => {
   await expect(page.locator('svg[class*="themeSparkline"]')).toHaveCount(2);
   await expect(page.locator('button[class*="stockThemeHeader"]').first()).toBeVisible();
   await expect(page.locator('line[class*="volumeDivider"]')).toHaveCount(1);
+  await expect(page.locator('div[class*="chartCanvas"]')).toHaveCSS("background-color", "rgb(10, 16, 24)");
   await expect(page.locator('text[class*="axisLabel"]').filter({ hasText: /\d{2}\/\d{2}\s\d{2}:\d{2}/ }).first()).toBeVisible();
+  await page.getByTestId("range-1D").click();
+  await expect(page.locator('g[class*="candleLayer"] rect')).toHaveCount(96);
+  await expect(page.locator('text[class*="axisLabel"]').filter({ hasText: /06\/11\s\d{2}:\d{2}/ }).first()).toBeVisible();
   await expect(page.getByText("MA 이탈: 괴리 0.4% + 하락 0.25% + 약세 7/10")).toBeVisible();
   await expect(page.getByText(/최고/).first()).toBeVisible();
   await expect(page.getByText("거래비용 0.065% / 편도")).toBeVisible();

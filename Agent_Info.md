@@ -64,6 +64,8 @@ automated trading assistant.
   high/low labels, right-side price ticks, volume bars, and realtime quote scaling over stable history.
 - Chart x-axis labels use deterministic date/time formatting: intraday ranges show month/day and
   hour/minute, mid ranges include short year/month/day and hour/minute, and long ranges show dates.
+- Chart ranges separate live market hours from 1-day history: `LIVE` renders the regular trading
+  session, while `1D` renders a 24-hour window with dark-theme chart styling.
 - The paper-trading simulation applies a first-pass one-way trading cost assumption of 0.065%
   (commission plus estimated slippage) so excessive round trips reduce simulated profit.
 - The automation guardrails reduce churn through stricter theme MA rollover confirmation instead of

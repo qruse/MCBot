@@ -633,9 +633,9 @@
   position: relative;
   aspect-ratio: 900 / 420;
   min-height: 0;
-  border: 1px solid #cfd6df;
+  border: 1px solid #243241;
   border-radius: 6px;
-  background: #ffffff;
+  background: #0a1018;
   padding: 10px;
 }
 
@@ -647,28 +647,28 @@
 }
 
 .gridLine {
-  stroke: #e6ebf0;
+  stroke: rgba(148, 163, 184, 0.2);
   stroke-width: 1;
 }
 
 .verticalGridLine {
-  stroke: #edf1f5;
+  stroke: rgba(148, 163, 184, 0.1);
   stroke-width: 1;
 }
 
 .volumeDivider {
-  stroke: #9ca3af;
+  stroke: rgba(148, 163, 184, 0.34);
   stroke-width: 1;
 }
 
 .currentPriceLine {
-  stroke: #64748b;
+  stroke: rgba(226, 232, 240, 0.62);
   stroke-dasharray: 2 4;
   stroke-width: 0.9;
 }
 
 .axisLabel {
-  fill: #5f6368;
+  fill: #8fa0af;
   font-size: 10px;
   font-weight: 760;
   letter-spacing: 0;
@@ -676,12 +676,12 @@
 }
 
 .areaPath {
-  fill: rgba(59, 130, 246, 0.08);
+  fill: rgba(56, 189, 248, 0.08);
 }
 
 .pricePath {
   fill: none;
-  stroke: #2563eb;
+  stroke: #e2e8f0;
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 1.35;
@@ -692,11 +692,11 @@
 }
 
 .volumeUp {
-  fill: #ef332f;
+  fill: #ef4444;
 }
 
 .volumeDown {
-  fill: #2f80ed;
+  fill: #3b82f6;
 }
 
 .candleLayer line {
@@ -711,20 +711,20 @@
 
 .candleUp line,
 .candleUp rect {
-  stroke: #ef332f;
+  stroke: #ef4444;
 }
 
 .candleUp rect {
-  fill: #ef332f;
+  fill: #ef4444;
 }
 
 .candleDown line,
 .candleDown rect {
-  stroke: #2f80ed;
+  stroke: #3b82f6;
 }
 
 .candleDown rect {
-  fill: #2f80ed;
+  fill: #3b82f6;
 }
 
 .ma5Path,
@@ -775,20 +775,20 @@
 }
 
 .extremeLabels text {
-  fill: #ef332f;
+  fill: #f87171;
   font-size: 10px;
   font-weight: 850;
 }
 
 .activeLine {
-  stroke: rgba(15, 23, 42, 0.45);
+  stroke: rgba(226, 232, 240, 0.55);
   stroke-dasharray: 5 5;
   stroke-width: 1.4;
 }
 
 .activeDot {
-  fill: #ffffff;
-  stroke: #111827;
+  fill: #0a1018;
+  stroke: #e2e8f0;
   stroke-width: 3;
 }
 

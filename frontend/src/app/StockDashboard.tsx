@@ -406,10 +406,14 @@ function formatClock(totalMinutes: number) {
 }
 
 function pointLabel(range: RangeKey, index: number, count: number) {
-  if (range === "LIVE" || range === "1D") {
+  if (range === "LIVE") {
     const start = 9 * 60;
     const end = 15 * 60 + 30;
     return formatClock(start + ((end - start) * index) / Math.max(count - 1, 1));
+  }
+
+  if (range === "1D") {
+    return `H-${Math.max(0, Math.round(24 - (24 * index) / Math.max(count - 1, 1)))}`;
   }
 
   if (range === "1W") {
@@ -435,8 +439,13 @@ function pointTimestamp(range: RangeKey, index: number, count: number) {
   const end = new Date(2026, 5, 12, 15, 30, 0);
   const ratio = index / Math.max(count - 1, 1);
 
-  if (range === "LIVE" || range === "1D") {
+  if (range === "LIVE") {
     const start = new Date(2026, 5, 12, 9, 0, 0).getTime();
+    return new Date(start + (end.getTime() - start) * ratio).toISOString();
+  }
+
+  if (range === "1D") {
+    const start = new Date(2026, 5, 11, 15, 30, 0).getTime();
     return new Date(start + (end.getTime() - start) * ratio).toISOString();
   }
 

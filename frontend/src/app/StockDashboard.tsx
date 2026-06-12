@@ -966,6 +966,20 @@ function tickUniverses(universes: ThemeUniverse[], tick: number) {
         volume: Math.round((stock.volume ?? 400000) * (0.7 + Math.abs(Math.sin(tick / 9 + stockIndex)))),
       };
       const live = [...stock.series.LIVE.slice(-83), nextPoint];
+      const oneDay = stock.series["1D"].map((point, index, points) => {
+        if (index !== points.length - 1) {
+          return point;
+        }
+
+        return {
+          ...point,
+          value: nextPrice,
+          close: nextPrice,
+          high: Math.max(point.high, nextPrice),
+          low: Math.min(point.low, nextPrice),
+          volume: point.volume + nextPoint.volume,
+        };
+      });
       const change = ((nextPrice - (stock.open || nextPrice)) / (stock.open || nextPrice)) * 100;
 
       return {
@@ -976,7 +990,7 @@ function tickUniverses(universes: ThemeUniverse[], tick: number) {
         high: Math.max(stock.high ?? nextPrice, nextPrice),
         low: Math.min(stock.low ?? nextPrice, nextPrice),
         signal: stockSignal(change),
-        series: { ...stock.series, LIVE: live, "1D": [...stock.series["1D"].slice(-95), nextPoint] },
+        series: { ...stock.series, LIVE: live, "1D": oneDay },
       };
     }),
   }));
@@ -1180,7 +1194,7 @@ export default function StockDashboard() {
     }
 
     loadChartHistory();
-    const intervalId = range === "LIVE" || range === "1D" ? window.setInterval(loadChartHistory, 1000) : null;
+    const intervalId = range === "LIVE" ? window.setInterval(loadChartHistory, 1000) : null;
 
     return () => {
       controller.abort();

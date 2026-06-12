@@ -67,6 +67,8 @@ automated trading assistant.
   hour/minute, mid ranges include short year/month/day and hour/minute, and long ranges show dates.
 - Chart ranges separate live market hours from 1-day history: `LIVE` renders the regular trading
   session, while `1D` renders a 24-hour window with dark-theme chart styling.
+- During 1-second simulated ticks, `LIVE` appends new short-interval candles, while `1D` keeps its
+  24-hour candle count fixed and updates only the active final candle's OHLC/volume.
 - The paper-trading simulation uses Korea Investment Securities fee assumptions: BanKIS domestic
   online KRX commission at 0.0140527%, and US online overseas trading at 0.25% buy / 0.25206% sell
   including the US SEC sell fee.

@@ -749,11 +749,19 @@ function yFor(value: number, min: number, max: number, height: number, paddingTo
   return paddingTop + ((max - value) / spread) * (height - paddingTop - paddingBottom);
 }
 
-function buildPath(points: ChartPoint[], width: number, height: number, min: number, max: number) {
+function buildPath(
+  points: ChartPoint[],
+  width: number,
+  height: number,
+  min: number,
+  max: number,
+  paddingTop: number,
+  paddingBottom: number,
+) {
   return points
     .map((point, index) => {
       const x = xFor(index, points.length, width, 60, 26);
-      const y = yFor(point.value, min, max, height, 20, 52);
+      const y = yFor(point.value, min, max, height, paddingTop, paddingBottom);
       return `${index === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
     })
     .join(" ");
@@ -883,6 +891,31 @@ export default function StockDashboard() {
       ),
     );
   }, [marketStocks, query]);
+  const filteredThemeGroups = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+
+    return marketThemes
+      .map((theme) => {
+        const themeMatches =
+          !normalizedQuery ||
+          [theme.name, theme.nameKo, theme.description ?? ""].some((value) =>
+            value.toLowerCase().includes(normalizedQuery),
+          );
+        const themeStocks = themeMatches
+          ? theme.stocks
+          : theme.stocks.filter((stock) =>
+              [stock.symbol, stock.name, stock.localName, stock.market, stock.sector, stock.sectorKo].some((value) =>
+                value.toLowerCase().includes(normalizedQuery),
+              ),
+            );
+
+        return {
+          theme,
+          stocks: themeStocks,
+        };
+      })
+      .filter((group) => group.stocks.length);
+  }, [marketThemes, query]);
   const selectedStock =
     stocks.find((stock) => stock.symbol === selectedSymbol && stock.region === marketScope) ??
     marketStocks[0] ??
@@ -1086,8 +1119,17 @@ export default function StockDashboard() {
     return () => window.clearTimeout(timeoutId);
   }, [activeTheme, autoRun, cash, language, positions, stocks, targetStocks, tick]);
 
+  const selectedFallbackPoints = selectedStock.series[range];
   const selectedHistoryPoints = chartHistory[selectedStock.symbol]?.[range];
-  const selectedPoints = selectedHistoryPoints?.length ? selectedHistoryPoints : selectedStock.series[range];
+  const selectedHistoryValues = selectedHistoryPoints?.map((point) => point.value) ?? [];
+  const selectedHistorySpread = selectedHistoryValues.length
+    ? Math.max(...selectedHistoryValues) - Math.min(...selectedHistoryValues)
+    : 0;
+  const hasUsableRealtimeHistory =
+    Boolean(selectedHistoryPoints?.length) &&
+    selectedHistoryValues.length >= Math.min(50, selectedFallbackPoints.length) &&
+    selectedHistorySpread > Math.abs(selectedHistoryValues[selectedHistoryValues.length - 1] ?? 1) * 0.0008;
+  const selectedPoints = hasUsableRealtimeHistory && selectedHistoryPoints ? selectedHistoryPoints : selectedFallbackPoints;
   const selectedValues = selectedPoints.map((point) => point.value);
   const selectedIndex = Math.min(activePoint ?? selectedPoints.length - 1, selectedPoints.length - 1);
   const selectedPoint = selectedPoints[selectedIndex];
@@ -1096,24 +1138,34 @@ export default function StockDashboard() {
   const rangeMove = ((rangeEnd - rangeStart) / rangeStart) * 100;
   const chartWidth = 900;
   const chartHeight = 420;
+  const priceTop = 18;
+  const priceBottomPadding = 108;
+  const priceBottomY = chartHeight - priceBottomPadding;
+  const volumeTopY = priceBottomY + 16;
+  const volumePaneHeight = 46;
+  const xAxisLabelY = chartHeight - 12;
   const candleExtremes = selectedPoints.flatMap((point) => [point.high, point.low]);
   const rawChartMin = Math.min(...selectedValues, ...candleExtremes);
   const rawChartMax = Math.max(...selectedValues, ...candleExtremes);
   const chartSpread = rawChartMax - rawChartMin || Math.abs(rangeEnd) * 0.01 || 1;
   const chartMin = rawChartMin - chartSpread * 0.12;
   const chartMax = rawChartMax + chartSpread * 0.1;
-  const path = buildPath(selectedPoints, chartWidth, chartHeight, chartMin, chartMax);
+  const path = buildPath(selectedPoints, chartWidth, chartHeight, chartMin, chartMax, priceTop, priceBottomPadding);
   const xAxisIndexes = axisTickIndexes(selectedPoints.length);
   const yAxisTicks = [0, 1, 2, 3, 4].map((item) => chartMax - ((chartMax - chartMin) * item) / 4);
   const candleWidth = Math.max(3, Math.min(10, ((chartWidth - 86) / selectedPoints.length) * 0.55));
+  const latestPoint = selectedPoints[selectedPoints.length - 1];
+  const latestY = yFor(latestPoint.value, chartMin, chartMax, chartHeight, priceTop, priceBottomPadding);
+  const showActivePoint = activePoint !== null;
   const activeX = xFor(selectedIndex, selectedPoints.length, chartWidth, 60, 26);
-  const activeY = yFor(selectedPoint.value, chartMin, chartMax, chartHeight, 20, 52);
+  const activeY = yFor(selectedPoint.value, chartMin, chartMax, chartHeight, priceTop, priceBottomPadding);
   const volumeMax = Math.max(...selectedPoints.map((point) => point.volume || 1));
   const watchedStocks = watchlist
     .map((symbol) => stocks.find((stock) => stock.symbol === symbol))
     .filter((stock): stock is Stock => Boolean(stock))
     .filter((stock) => stock.region === marketScope);
   const latestFetchedAt = stocks.find((stock) => stock.fetchedAt)?.fetchedAt;
+  const tradingMarketLabel = marketScope === "domestic" ? "국내 모의매매" : `해외 모의매매 · FX ${usdKrw.toLocaleString("ko-KR")}`;
   const accountValue = positions.reduce((sum, position) => {
     const stock = stocks.find((item) => item.symbol === position.symbol);
     return sum + liquidationValue(position, stock);
@@ -1354,33 +1406,41 @@ export default function StockDashboard() {
               </div>
             ) : null}
             <div className={styles.stockList}>
-              {filteredStocks.length ? (
-                filteredStocks.map((stock) => (
-                  <button
-                    className={`${styles.stockRow} ${stock.symbol === selectedStock.symbol ? styles.stockRowSelected : ""}`}
-                    key={stock.symbol}
-                    type="button"
-                    onClick={() => {
-                      setSelectedSymbol(stock.symbol);
-                      setActivePoint(null);
-                    }}
-                  >
-                    <span>
-                      <strong>
-                        {stock.symbol}
-                        <em>#{stock.rank}</em>
-                      </strong>
-                      <small>{stockName(stock, language)}</small>
-                    </span>
-                    <span>
-                      <b>{formatPrice(stock)}</b>
-                      <small className={stock.change >= 0 ? styles.positive : styles.negative}>
-                        {stock.change >= 0 ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
-                        {stock.change > 0 ? "+" : ""}
-                        {stock.change.toFixed(2)}%
-                      </small>
-                    </span>
-                  </button>
+              {filteredThemeGroups.length ? (
+                filteredThemeGroups.map((group) => (
+                  <section className={styles.stockThemeGroup} key={group.theme.id}>
+                    <button className={styles.stockThemeHeader} type="button" onClick={() => focusTheme(group.theme)}>
+                      <span>{themeName(group.theme, language)}</span>
+                      <strong>{themeMomentum(group.theme).toFixed(2)} MA</strong>
+                    </button>
+                    {group.stocks.map((stock) => (
+                      <button
+                        className={`${styles.stockRow} ${stock.symbol === selectedStock.symbol ? styles.stockRowSelected : ""}`}
+                        key={stock.symbol}
+                        type="button"
+                        onClick={() => {
+                          setSelectedSymbol(stock.symbol);
+                          setActivePoint(null);
+                        }}
+                      >
+                        <span>
+                          <strong>
+                            {stock.symbol}
+                            <em>#{stock.rank}</em>
+                          </strong>
+                          <small>{stockName(stock, language)}</small>
+                        </span>
+                        <span>
+                          <b>{formatPrice(stock)}</b>
+                          <small className={stock.change >= 0 ? styles.positive : styles.negative}>
+                            {stock.change >= 0 ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
+                            {stock.change > 0 ? "+" : ""}
+                            {stock.change.toFixed(2)}%
+                          </small>
+                        </span>
+                      </button>
+                    ))}
+                  </section>
                 ))
               ) : (
                 <p className={styles.emptyState}>{t.noMatches}</p>
@@ -1484,7 +1544,7 @@ export default function StockDashboard() {
                   </linearGradient>
                 </defs>
                 {yAxisTicks.map((tickValue) => {
-                  const y = yFor(tickValue, chartMin, chartMax, chartHeight, 20, 52);
+                  const y = yFor(tickValue, chartMin, chartMax, chartHeight, priceTop, priceBottomPadding);
 
                   return (
                     <g key={tickValue.toFixed(2)}>
@@ -1500,8 +1560,8 @@ export default function StockDashboard() {
 
                   return (
                     <g key={`${range}-${index}`}>
-                      <line className={styles.verticalGridLine} x1={x} x2={x} y1={20} y2={chartHeight - 52} />
-                      <text className={styles.axisLabel} textAnchor="middle" x={x} y={chartHeight - 12}>
+                      <line className={styles.verticalGridLine} x1={x} x2={x} y1={priceTop} y2={priceBottomY} />
+                      <text className={styles.axisLabel} textAnchor="middle" x={x} y={xAxisLabelY}>
                         {formatChartPointLabel(selectedPoints[index], range, language)}
                       </text>
                     </g>
@@ -1510,7 +1570,7 @@ export default function StockDashboard() {
                 <g className={styles.volumeLayer}>
                   {selectedPoints.map((point, index) => {
                     const x = xFor(index, selectedPoints.length, chartWidth, 60, 26);
-                    const height = ((point.volume || 0) / volumeMax) * 36;
+                    const height = ((point.volume || 0) / volumeMax) * volumePaneHeight;
 
                     return (
                       <rect
@@ -1519,7 +1579,7 @@ export default function StockDashboard() {
                         key={`v-${index}`}
                         width={Math.max(2, candleWidth * 0.8)}
                         x={x - candleWidth * 0.4}
-                        y={chartHeight - 52 - height}
+                        y={volumeTopY + volumePaneHeight - height}
                       />
                     );
                   })}
@@ -1528,7 +1588,7 @@ export default function StockDashboard() {
                   <>
                     <path
                       className={styles.areaPath}
-                      d={`${path} L ${chartWidth - 26} ${chartHeight - 52} L 60 ${chartHeight - 52} Z`}
+                      d={`${path} L ${chartWidth - 26} ${priceBottomY} L 60 ${priceBottomY} Z`}
                     />
                     <path className={styles.pricePath} d={path} />
                   </>
@@ -1536,10 +1596,10 @@ export default function StockDashboard() {
                   <g className={styles.candleLayer}>
                     {selectedPoints.map((point, index) => {
                       const x = xFor(index, selectedPoints.length, chartWidth, 60, 26);
-                      const openY = yFor(point.open, chartMin, chartMax, chartHeight, 20, 52);
-                      const closeY = yFor(point.close, chartMin, chartMax, chartHeight, 20, 52);
-                      const highY = yFor(point.high, chartMin, chartMax, chartHeight, 20, 52);
-                      const lowY = yFor(point.low, chartMin, chartMax, chartHeight, 20, 52);
+                      const openY = yFor(point.open, chartMin, chartMax, chartHeight, priceTop, priceBottomPadding);
+                      const closeY = yFor(point.close, chartMin, chartMax, chartHeight, priceTop, priceBottomPadding);
+                      const highY = yFor(point.high, chartMin, chartMax, chartHeight, priceTop, priceBottomPadding);
+                      const lowY = yFor(point.low, chartMin, chartMax, chartHeight, priceTop, priceBottomPadding);
                       const isUp = point.close >= point.open;
                       const bodyTop = Math.min(openY, closeY);
                       const bodyHeight = Math.max(Math.abs(closeY - openY), 2);
@@ -1553,14 +1613,22 @@ export default function StockDashboard() {
                     })}
                   </g>
                 )}
-                <line className={styles.activeLine} x1={activeX} x2={activeX} y1={20} y2={chartHeight - 52} />
-                <circle className={styles.activeDot} cx={activeX} cy={activeY} r="5" />
+                <line className={styles.volumeDivider} x1={60} x2={chartWidth - 26} y1={volumeTopY - 8} y2={volumeTopY - 8} />
+                <line className={styles.currentPriceLine} x1={60} x2={chartWidth - 26} y1={latestY} y2={latestY} />
+                {showActivePoint ? (
+                  <>
+                    <line className={styles.activeLine} x1={activeX} x2={activeX} y1={priceTop} y2={priceBottomY} />
+                    <circle className={styles.activeDot} cx={activeX} cy={activeY} r="5" />
+                  </>
+                ) : null}
               </svg>
-              <div className={styles.chartTooltip} style={{ left: `${(activeX / chartWidth) * 100}%` }}>
-                <span>{formatChartPointLabel(selectedPoint, range, language)}</span>
-                <strong>{selectedStock.currency === "KRW" ? formatMoney(selectedPoint.value) : formatMoney(selectedPoint.value, "USD")}</strong>
-                <small>O {selectedPoint.open.toFixed(selectedStock.currency === "KRW" ? 0 : 2)} / C {selectedPoint.close.toFixed(selectedStock.currency === "KRW" ? 0 : 2)}</small>
-              </div>
+              {showActivePoint ? (
+                <div className={styles.chartTooltip} style={{ left: `${(activeX / chartWidth) * 100}%` }}>
+                  <span>{formatChartPointLabel(selectedPoint, range, language)}</span>
+                  <strong>{selectedStock.currency === "KRW" ? formatMoney(selectedPoint.value) : formatMoney(selectedPoint.value, "USD")}</strong>
+                  <small>O {selectedPoint.open.toFixed(selectedStock.currency === "KRW" ? 0 : 2)} / C {selectedPoint.close.toFixed(selectedStock.currency === "KRW" ? 0 : 2)}</small>
+                </div>
+              ) : null}
             </div>
 
             <div className={styles.chartFoot}>
@@ -1626,6 +1694,14 @@ export default function StockDashboard() {
                     {formatMoney(pnl)}
                   </strong>
                 </div>
+                <div>
+                  <span>Market</span>
+                  <strong>{tradingMarketLabel}</strong>
+                </div>
+                <div>
+                  <span>Trading cost</span>
+                  <strong>{(oneWayTradingCostRate * 100).toFixed(3)}%</strong>
+                </div>
               </div>
               <div className={styles.simActions}>
                 <label className={styles.autoToggle}>
@@ -1645,6 +1721,7 @@ export default function StockDashboard() {
               </div>
               <div className={styles.ruleList}>
                 <span>{t.activeTheme}: {activeTheme ? themeName(activeTheme, language) : "-"}</span>
+                <span>{tradingMarketLabel}</span>
                 <span>{t.stopLoss}</span>
                 <span>거래비용 {(oneWayTradingCostRate * 100).toFixed(3)}% / 편도</span>
                 <span>{t.exitRule}</span>

@@ -64,3 +64,5 @@ automated trading assistant.
   high/low labels, right-side price ticks, volume bars, and realtime quote scaling over stable history.
 - The paper-trading simulation applies a first-pass one-way trading cost assumption of 0.065%
   (commission plus estimated slippage) so excessive round trips reduce simulated profit.
+- The automation guardrails intentionally throttle short-term churn with a 3-minute minimum hold,
+  a 2-minute reentry cooldown, and stricter theme MA rollover confirmation.

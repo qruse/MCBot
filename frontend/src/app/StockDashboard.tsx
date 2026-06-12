@@ -113,6 +113,7 @@ type Position = {
   entryPrice: number;
   entryValue: number;
   entryFee: number;
+  entryTick: number;
 };
 
 type KisQuote = {
@@ -173,6 +174,10 @@ const usdKrw = 1380;
 const commissionRate = 0.00015;
 const estimatedSlippageRate = 0.0005;
 const oneWayTradingCostRate = commissionRate + estimatedSlippageRate;
+const minHoldSeconds = 180;
+const reentryCooldownSeconds = 120;
+const maRolloverSlopeBuffer = 0.0005;
+const maRolloverSpreadBuffer = 0.001;
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 
 const copy = {
@@ -715,13 +720,16 @@ function themeMomentum(theme: ThemeUniverse) {
 }
 
 function isMovingAverageRollingOver(theme: ThemeUniverse) {
-  const lastThree = theme.stocks.slice(0, 10).map((stock) => {
+  const rolloverSignals = theme.stocks.slice(0, 10).map((stock) => {
     const trend = stockMovingAverageTrend(stock);
 
-    return trend.fast < trend.previousFast || trend.fast < trend.slow;
+    const fastBelowSlow = trend.fast < trend.slow * (1 - maRolloverSpreadBuffer);
+    const fastClearlyFalling = trend.fast < trend.previousFast * (1 - maRolloverSlopeBuffer);
+
+    return fastBelowSlow && fastClearlyFalling;
   });
 
-  return lastThree.filter(Boolean).length >= 6;
+  return rolloverSignals.filter(Boolean).length >= 7;
 }
 
 function themeSparklinePath(theme: ThemeUniverse, width = 142, height = 34) {
@@ -888,6 +896,7 @@ export default function StockDashboard() {
   const [autoRun, setAutoRun] = useState(true);
   const [cash, setCash] = useState(initialCash);
   const [positions, setPositions] = useState<Position[]>([]);
+  const [lastExitTick, setLastExitTick] = useState(-reentryCooldownSeconds);
   const [tradeLog, setTradeLog] = useState<string[]>(["Ready: 10,000,000 KRW paper account"]);
   const [tick, setTick] = useState(0);
   const [activeNav, setActiveNav] = useState("home");
@@ -1092,15 +1101,21 @@ export default function StockDashboard() {
       const tradingDaySeconds = 390 * 60;
       const closeWindowSeconds = 5 * 60;
       const isCloseWindow = tick % tradingDaySeconds >= tradingDaySeconds - closeWindowSeconds;
+      const oldestEntryTick = positions.length ? Math.min(...positions.map((position) => position.entryTick)) : tick;
+      const heldSeconds = positions.length ? tick - oldestEntryTick : 0;
+      const canExitAfterHold = heldSeconds >= minHoldSeconds;
+      const cooldownPassed = tick - lastExitTick >= reentryCooldownSeconds;
       const maRollingOver = isMovingAverageRollingOver(activeTheme);
-      const shouldExit = lossTriggered || maRollingOver || isCloseWindow;
-      const canEnter = !maRollingOver && !isCloseWindow;
+      const shouldExit = lossTriggered || isCloseWindow || (maRollingOver && canExitAfterHold);
+      const canEnter = !maRollingOver && !isCloseWindow && cooldownPassed;
       const currentSymbols = positions.map((position) => position.symbol).sort().join(",");
       const targetSymbols = targetStocks.map((stock) => stock.symbol).sort().join(",");
+      const shouldRotate = currentSymbols !== targetSymbols && canExitAfterHold;
 
-      if (positions.length && (shouldExit || currentSymbols !== targetSymbols)) {
+      if (positions.length && (shouldExit || shouldRotate)) {
         setCash(portfolioValue);
         setPositions([]);
+        setLastExitTick(tick);
         setTradeLog((log) => [
           `${new Date().toLocaleTimeString("ko-KR")} SELL ${
             lossTriggered ? "stop-loss" : isCloseWindow ? "pre-close" : maRollingOver ? "MA rollover" : "rotation"
@@ -1123,6 +1138,7 @@ export default function StockDashboard() {
             entryPrice,
             entryValue: allocation,
             entryFee: allocation * oneWayTradingCostRate,
+            entryTick: tick,
           };
         });
 
@@ -1144,7 +1160,7 @@ export default function StockDashboard() {
     }, 0);
 
     return () => window.clearTimeout(timeoutId);
-  }, [activeTheme, autoRun, cash, language, positions, stocks, targetStocks, tick]);
+  }, [activeTheme, autoRun, cash, language, lastExitTick, positions, stocks, targetStocks, tick]);
 
   const selectedFallbackPoints = selectedStock.series[range];
   const selectedHistoryPoints = chartHistory[selectedStock.symbol]?.[range];
@@ -1290,6 +1306,7 @@ export default function StockDashboard() {
   function resetSimulation() {
     setCash(initialCash);
     setPositions([]);
+    setLastExitTick(-reentryCooldownSeconds);
     setTradeLog(["Reset: 10,000,000 KRW paper account"]);
     setStatusMessage("모의 계좌를 10,000,000원으로 초기화");
   }
@@ -1806,6 +1823,8 @@ export default function StockDashboard() {
                 </button>
               </div>
               <div className={styles.ruleList}>
+                <span>최소 보유 {Math.round(minHoldSeconds / 60)}분</span>
+                <span>재진입 쿨다운 {Math.round(reentryCooldownSeconds / 60)}분</span>
                 <span>{t.activeTheme}: {activeTheme ? themeName(activeTheme, language) : "-"}</span>
                 <span>{tradingMarketLabel}</span>
                 <span>{t.stopLoss}</span>

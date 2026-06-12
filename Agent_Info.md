@@ -70,8 +70,9 @@ automated trading assistant.
 - The paper-trading simulation uses Korea Investment Securities fee assumptions: BanKIS domestic
   online KRX commission at 0.0140527%, and US online overseas trading at 0.25% buy / 0.25206% sell
   including the US SEC sell fee.
-- Paper-trading orders allocate the configured account balance across the target top 3 but only buy
-  whole shares; any amount that cannot buy at least one more share remains as cash.
+- Paper-trading orders allocate the configured account balance across the target top 3, buy only
+  whole shares, and reuse leftover cash to add shares to the lowest-invested target so the portfolio
+  stays as evenly distributed as whole-share constraints allow.
 - The dashboard has a theme/universe refresh button that refetches `/universe/themes` so market-cap
   top lists can be refreshed without reloading the app.
 - The automation guardrails reduce churn through stricter theme MA rollover confirmation instead of

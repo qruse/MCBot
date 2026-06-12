@@ -730,6 +730,44 @@ function liquidationValue(position: Position, stock: Stock | undefined) {
   return position.shares * priceToKrw(stock) * (1 - sellCostRate(stock));
 }
 
+function buildBalancedPaperPositions(targetStocks: Stock[], availableCash: number): Position[] {
+  const targetAllocation = availableCash / Math.max(targetStocks.length, 1);
+  const drafts = targetStocks.map((stock) => {
+    const entryPrice = priceToKrw(stock);
+    const entryCostRate = buyCostRate(stock);
+    const unitCost = entryPrice * (1 + entryCostRate);
+    const shares = Math.floor(targetAllocation / unitCost);
+    const entryGrossValue = shares * entryPrice;
+    const entryFee = entryGrossValue * entryCostRate;
+
+    return {
+      symbol: stock.symbol,
+      shares,
+      entryPrice,
+      entryFee,
+      entryValue: entryGrossValue + entryFee,
+      unitCost,
+      unitFee: entryPrice * entryCostRate,
+    };
+  });
+  let remainingCash = availableCash - drafts.reduce((sum, draft) => sum + draft.entryValue, 0);
+
+  while (drafts.some((draft) => draft.unitCost <= remainingCash)) {
+    const nextDraft = drafts
+      .filter((draft) => draft.unitCost <= remainingCash)
+      .sort((left, right) => left.entryValue - right.entryValue || left.unitCost - right.unitCost)[0];
+
+    nextDraft.shares += 1;
+    nextDraft.entryValue += nextDraft.unitCost;
+    nextDraft.entryFee += nextDraft.unitFee;
+    remainingCash -= nextDraft.unitCost;
+  }
+
+  return drafts
+    .filter((draft) => draft.shares > 0)
+    .map(({ unitCost: _unitCost, unitFee: _unitFee, ...position }) => position);
+}
+
 function formatCompactNumber(value: number | null | undefined) {
   if (!value) {
     return "-";
@@ -1189,29 +1227,7 @@ export default function StockDashboard() {
       }
 
       if (!positions.length && cash > 1000 && canEnter) {
-        const allocation = cash / targetStocks.length;
-        const nextPositions = targetStocks.flatMap((stock) => {
-          const entryPrice = priceToKrw(stock);
-          const entryCostRate = buyCostRate(stock);
-          const effectiveEntryPrice = entryPrice * (1 + entryCostRate);
-          const shares = Math.floor(allocation / effectiveEntryPrice);
-
-          if (shares < 1) {
-            return [];
-          }
-
-          const entryGrossValue = shares * entryPrice;
-          const entryFee = entryGrossValue * entryCostRate;
-
-          return [{
-            symbol: stock.symbol,
-            shares,
-            entryPrice,
-            entryValue: entryGrossValue + entryFee,
-            entryFee,
-          }];
-        });
-
+        const nextPositions = buildBalancedPaperPositions(targetStocks, cash);
         const investedCash = nextPositions.reduce((sum, position) => sum + position.entryValue, 0);
 
         if (!nextPositions.length) {
@@ -1930,7 +1946,7 @@ export default function StockDashboard() {
                 <span>MA 이탈: 괴리 0.4% + 하락 0.25% + 약세 7/10</span>
                 <span>{t.activeTheme}: {activeTheme ? themeName(activeTheme, language) : "-"}</span>
                 <span>{tradingMarketLabel}</span>
-                <span>정수 1주 단위 매수 · 잔여 현금 유지</span>
+                <span>TOP3 고르게 분산 · 정수 1주 단위</span>
                 <span>{t.stopLoss}</span>
                 <span>거래비용 {tradingCostText}</span>
                 <span>{t.exitRule}</span>

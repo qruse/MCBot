@@ -27,6 +27,7 @@ test("brokerage dashboard controls work", async ({ page }) => {
   await expect(page.locator('g[class*="candleLayer"] rect')).toHaveCount(96);
   await expect(page.locator('text[class*="axisLabel"]').filter({ hasText: /06\/11\s\d{2}:\d{2}/ }).first()).toBeVisible();
   await expect(page.getByText(/0\.4%.*0\.25%.*7\/10/).first()).toBeVisible();
+  await expect(page.getByText("정수 1주 단위 매수 · 잔여 현금 유지")).toBeVisible();
   await expect(page.locator('g[class*="extremeLabels"] text')).toHaveCount(2);
   await expect(page.getByText("거래비용 국내 0.01405% / 편도")).toBeVisible();
   await expect(page.getByTestId("universe-refresh")).toBeVisible();

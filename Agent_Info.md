@@ -69,6 +69,8 @@ automated trading assistant.
 - The paper-trading simulation uses Korea Investment Securities fee assumptions: BanKIS domestic
   online KRX commission at 0.0140527%, and US online overseas trading at 0.25% buy / 0.25206% sell
   including the US SEC sell fee.
+- Paper-trading orders allocate the 10,000,000 KRW account across the target top 3 but only buy
+  whole shares; any amount that cannot buy at least one more share remains as cash.
 - The dashboard has a theme/universe refresh button that refetches `/universe/themes` so market-cap
   top lists can be refreshed without reloading the app.
 - The automation guardrails reduce churn through stricter theme MA rollover confirmation instead of

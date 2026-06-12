@@ -1188,21 +1188,36 @@ export default function StockDashboard() {
 
       if (!positions.length && cash > 1000 && canEnter) {
         const allocation = cash / targetStocks.length;
-        const nextPositions = targetStocks.map((stock) => {
+        const nextPositions = targetStocks.flatMap((stock) => {
           const entryPrice = priceToKrw(stock);
           const entryCostRate = buyCostRate(stock);
           const effectiveEntryPrice = entryPrice * (1 + entryCostRate);
+          const shares = Math.floor(allocation / effectiveEntryPrice);
 
-          return {
+          if (shares < 1) {
+            return [];
+          }
+
+          const entryGrossValue = shares * entryPrice;
+          const entryFee = entryGrossValue * entryCostRate;
+
+          return [{
             symbol: stock.symbol,
-            shares: allocation / effectiveEntryPrice,
+            shares,
             entryPrice,
-            entryValue: allocation,
-            entryFee: allocation * entryCostRate,
-          };
+            entryValue: entryGrossValue + entryFee,
+            entryFee,
+          }];
         });
 
-        setCash(0);
+        const investedCash = nextPositions.reduce((sum, position) => sum + position.entryValue, 0);
+
+        if (!nextPositions.length) {
+          setStatusMessage("배정 현금으로 1주 이상 매수 가능한 TOP3 종목이 없습니다");
+          return;
+        }
+
+        setCash(Math.max(0, cash - investedCash));
         setPositions(nextPositions);
         setTradeLog((log) => [
           `${new Date().toLocaleTimeString("ko-KR")} BUY ${themeName(activeTheme, language)} TOP3 fee ${formatMoney(
@@ -1894,6 +1909,7 @@ export default function StockDashboard() {
                 <span>MA 이탈: 괴리 0.4% + 하락 0.25% + 약세 7/10</span>
                 <span>{t.activeTheme}: {activeTheme ? themeName(activeTheme, language) : "-"}</span>
                 <span>{tradingMarketLabel}</span>
+                <span>정수 1주 단위 매수 · 잔여 현금 유지</span>
                 <span>{t.stopLoss}</span>
                 <span>거래비용 {tradingCostText}</span>
                 <span>{t.exitRule}</span>
@@ -1907,7 +1923,9 @@ export default function StockDashboard() {
                     return (
                       <div key={position.symbol}>
                         <strong>{position.symbol}</strong>
-                        <span>{formatMoney(value)}</span>
+                        <span>
+                          {position.shares.toLocaleString("ko-KR")}주 · {formatMoney(value)}
+                        </span>
                       </div>
                     );
                   })

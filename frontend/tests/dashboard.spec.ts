@@ -22,8 +22,7 @@ test("brokerage dashboard controls work", async ({ page }) => {
   await expect(page.locator('button[class*="stockThemeHeader"]').first()).toBeVisible();
   await expect(page.locator('line[class*="volumeDivider"]')).toHaveCount(1);
   await expect(page.locator('text[class*="axisLabel"]').filter({ hasText: /\d{2}\/\d{2}\s\d{2}:\d{2}/ }).first()).toBeVisible();
-  await expect(page.getByText("최소 보유 3분")).toBeVisible();
-  await expect(page.getByText("재진입 쿨다운 2분")).toBeVisible();
+  await expect(page.getByText("MA 이탈: 괴리 0.4% + 하락 0.25% + 약세 7/10")).toBeVisible();
   await expect(page.getByText(/최고/).first()).toBeVisible();
   await expect(page.getByText("거래비용 0.065% / 편도")).toBeVisible();
 

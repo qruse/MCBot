@@ -66,5 +66,6 @@ automated trading assistant.
   hour/minute, mid ranges include short year/month/day and hour/minute, and long ranges show dates.
 - The paper-trading simulation applies a first-pass one-way trading cost assumption of 0.065%
   (commission plus estimated slippage) so excessive round trips reduce simulated profit.
-- The automation guardrails intentionally throttle short-term churn with a 3-minute minimum hold,
-  a 2-minute reentry cooldown, and stricter theme MA rollover confirmation.
+- The automation guardrails reduce churn through stricter theme MA rollover confirmation instead of
+  time locks: rollover requires fast/slow MA spread weakness, fast MA decline, weak stock score, and
+  at least 7 of the theme top 10 showing the same deterioration.

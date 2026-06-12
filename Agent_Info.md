@@ -66,8 +66,11 @@ automated trading assistant.
   hour/minute, mid ranges include short year/month/day and hour/minute, and long ranges show dates.
 - Chart ranges separate live market hours from 1-day history: `LIVE` renders the regular trading
   session, while `1D` renders a 24-hour window with dark-theme chart styling.
-- The paper-trading simulation applies a first-pass one-way trading cost assumption of 0.065%
-  (commission plus estimated slippage) so excessive round trips reduce simulated profit.
+- The paper-trading simulation uses Korea Investment Securities fee assumptions: BanKIS domestic
+  online KRX commission at 0.0140527%, and US online overseas trading at 0.25% buy / 0.25206% sell
+  including the US SEC sell fee.
+- The dashboard has a theme/universe refresh button that refetches `/universe/themes` so market-cap
+  top lists can be refreshed without reloading the app.
 - The automation guardrails reduce churn through stricter theme MA rollover confirmation instead of
   time locks: rollover requires fast/slow MA spread weakness, fast MA decline, weak stock score, and
   at least 7 of the theme top 10 showing the same deterioration.

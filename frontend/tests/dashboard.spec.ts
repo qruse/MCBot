@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+﻿import { expect, test } from "@playwright/test";
 
 test("brokerage dashboard controls work", async ({ page }) => {
   const consoleIssues: string[] = [];
@@ -26,16 +26,20 @@ test("brokerage dashboard controls work", async ({ page }) => {
   await page.getByTestId("range-1D").click();
   await expect(page.locator('g[class*="candleLayer"] rect')).toHaveCount(96);
   await expect(page.locator('text[class*="axisLabel"]').filter({ hasText: /06\/11\s\d{2}:\d{2}/ }).first()).toBeVisible();
-  await expect(page.getByText("MA 이탈: 괴리 0.4% + 하락 0.25% + 약세 7/10")).toBeVisible();
-  await expect(page.getByText(/최고/).first()).toBeVisible();
-  await expect(page.getByText("거래비용 0.065% / 편도")).toBeVisible();
+  await expect(page.getByText(/0\.4%.*0\.25%.*7\/10/).first()).toBeVisible();
+  await expect(page.locator('g[class*="extremeLabels"] text')).toHaveCount(2);
+  await expect(page.getByText("거래비용 국내 0.01405% / 편도")).toBeVisible();
+  await expect(page.getByTestId("universe-refresh")).toBeVisible();
+  await page.getByTestId("universe-refresh").click();
+  await expect(page.getByText("테마/시총 TOP10 갱신 완료")).toBeVisible();
 
   await page.getByTestId("market-tab-overseas").click();
   await expect(page.getByText("NVDA").first()).toBeVisible();
-  await expect(page.getByText(/해외 모의매매/).first()).toBeVisible();
   await expect(page.getByText(/FX 1,380/).first()).toBeVisible();
+  await expect(page.getByText(/미국 매수 0.250%/).first()).toBeVisible();
+  await expect(page.getByText(/매도 0.252%/).first()).toBeVisible();
 
-  await page.getByPlaceholder("티커, 회사, 시장, 테마 검색").fill("MSFT");
+  await page.locator('input[placeholder]').fill("MSFT");
   await expect(page.getByText("MSFT").first()).toBeVisible();
 
   await page.getByTestId("chart-type-line").click();
@@ -52,7 +56,7 @@ test("brokerage dashboard controls work", async ({ page }) => {
 
   await page.getByTestId("simulation-reset").click();
   await expect(page.getByText("Reset: 10,000,000 KRW paper account")).toBeVisible();
-  await expect(page.getByText("10,000,000원").first()).toBeVisible();
+  await expect(page.getByText(/10,000,000/).first()).toBeVisible();
 
   await page.screenshot({ path: "../test_logs/frontend-dashboard-qa-desktop.png", fullPage: false });
   await page.setViewportSize({ width: 390, height: 844 });

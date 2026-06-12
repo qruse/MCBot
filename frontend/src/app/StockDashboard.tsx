@@ -170,9 +170,9 @@ type DataStatus = "idle" | "loading" | "ready" | "error";
 const ranges: RangeKey[] = ["LIVE", "1D", "1W", "1M", "1Y", "5Y", "ALL"];
 const initialCash = 10_000_000;
 const usdKrw = 1380;
-const commissionRate = 0.00015;
-const estimatedSlippageRate = 0.0005;
-const oneWayTradingCostRate = commissionRate + estimatedSlippageRate;
+const kisDomesticOnlineCommissionRate = 0.000140527;
+const kisUsOnlineCommissionRate = 0.0025;
+const usSecSellFeeRate = 0.0000206;
 const maRolloverSlopeBuffer = 0.0025;
 const maRolloverSpreadBuffer = 0.004;
 const maRolloverThemeMomentumFloor = -0.18;
@@ -636,6 +636,8 @@ function padDatePart(value: number) {
 }
 
 function formatChartPointLabel(point: ChartPoint, range: RangeKey, _language: Language) {
+  void _language;
+
   if (!point.timestamp) {
     return point.label;
   }
@@ -700,12 +702,32 @@ function priceToKrw(stock: Stock) {
   return stock.currency === "KRW" ? stock.price : stock.price * usdKrw;
 }
 
+function buyCostRate(stock: Stock) {
+  return stock.region === "domestic" ? kisDomesticOnlineCommissionRate : kisUsOnlineCommissionRate;
+}
+
+function sellCostRate(stock: Stock) {
+  return stock.region === "domestic" ? kisDomesticOnlineCommissionRate : kisUsOnlineCommissionRate + usSecSellFeeRate;
+}
+
+function tradingCostLabel(scope: MarketScope) {
+  if (scope === "domestic") {
+    return `국내 ${formatRate(kisDomesticOnlineCommissionRate)} / 편도`;
+  }
+
+  return `미국 매수 ${formatRate(kisUsOnlineCommissionRate)} · 매도 ${formatRate(kisUsOnlineCommissionRate + usSecSellFeeRate)}`;
+}
+
+function formatRate(rate: number) {
+  return `${(rate * 100).toFixed(rate < 0.001 ? 5 : 3)}%`;
+}
+
 function liquidationValue(position: Position, stock: Stock | undefined) {
   if (!stock) {
     return 0;
   }
 
-  return position.shares * priceToKrw(stock) * (1 - oneWayTradingCostRate);
+  return position.shares * priceToKrw(stock) * (1 - sellCostRate(stock));
 }
 
 function formatCompactNumber(value: number | null | undefined) {
@@ -936,6 +958,7 @@ export default function StockDashboard() {
   const [dataStatus, setDataStatus] = useState<DataStatus>("idle");
   const [dataError, setDataError] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
+  const [universeRefreshKey, setUniverseRefreshKey] = useState(0);
   const [autoRun, setAutoRun] = useState(true);
   const [cash, setCash] = useState(initialCash);
   const [positions, setPositions] = useState<Position[]>([]);
@@ -1018,6 +1041,7 @@ export default function StockDashboard() {
         }
 
         setUniverses(nextUniverses);
+        setStatusMessage("테마/시총 TOP10 갱신 완료");
       } catch {
         return;
       }
@@ -1026,7 +1050,7 @@ export default function StockDashboard() {
     loadThemeUniverse();
 
     return () => controller.abort();
-  }, []);
+  }, [universeRefreshKey]);
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
@@ -1166,14 +1190,15 @@ export default function StockDashboard() {
         const allocation = cash / targetStocks.length;
         const nextPositions = targetStocks.map((stock) => {
           const entryPrice = priceToKrw(stock);
-          const effectiveEntryPrice = entryPrice * (1 + oneWayTradingCostRate);
+          const entryCostRate = buyCostRate(stock);
+          const effectiveEntryPrice = entryPrice * (1 + entryCostRate);
 
           return {
             symbol: stock.symbol,
             shares: allocation / effectiveEntryPrice,
             entryPrice,
             entryValue: allocation,
-            entryFee: allocation * oneWayTradingCostRate,
+            entryFee: allocation * entryCostRate,
           };
         });
 
@@ -1181,7 +1206,7 @@ export default function StockDashboard() {
         setPositions(nextPositions);
         setTradeLog((log) => [
           `${new Date().toLocaleTimeString("ko-KR")} BUY ${themeName(activeTheme, language)} TOP3 fee ${formatMoney(
-            cash * oneWayTradingCostRate,
+            nextPositions.reduce((sum, position) => sum + position.entryFee, 0),
           )}`,
           ...log.slice(0, 5),
         ]);
@@ -1277,6 +1302,7 @@ export default function StockDashboard() {
     .filter((stock) => stock.region === marketScope);
   const latestFetchedAt = stocks.find((stock) => stock.fetchedAt)?.fetchedAt;
   const tradingMarketLabel = marketScope === "domestic" ? "국내 모의매매" : `해외 모의매매 · FX ${usdKrw.toLocaleString("ko-KR")}`;
+  const tradingCostText = tradingCostLabel(marketScope);
   const accountValue = positions.reduce((sum, position) => {
     const stock = stocks.find((item) => item.symbol === position.symbol);
     return sum + liquidationValue(position, stock);
@@ -1496,6 +1522,14 @@ export default function StockDashboard() {
               aria-label={t.refreshQuotes}
             >
               <RefreshCw size={14} />
+            </button>
+            <button
+              className={styles.universeRefreshButton}
+              data-testid="universe-refresh"
+              type="button"
+              onClick={() => setUniverseRefreshKey((currentKey) => currentKey + 1)}
+            >
+              테마 갱신
             </button>
           </div>
         </section>
@@ -1837,7 +1871,7 @@ export default function StockDashboard() {
                 </div>
                 <div>
                   <span>Trading cost</span>
-                  <strong>{(oneWayTradingCostRate * 100).toFixed(3)}%</strong>
+                  <strong>{tradingCostText}</strong>
                 </div>
               </div>
               <div className={styles.simActions}>
@@ -1861,7 +1895,7 @@ export default function StockDashboard() {
                 <span>{t.activeTheme}: {activeTheme ? themeName(activeTheme, language) : "-"}</span>
                 <span>{tradingMarketLabel}</span>
                 <span>{t.stopLoss}</span>
-                <span>거래비용 {(oneWayTradingCostRate * 100).toFixed(3)}% / 편도</span>
+                <span>거래비용 {tradingCostText}</span>
                 <span>{t.exitRule}</span>
               </div>
               <div className={styles.positionList}>

@@ -211,9 +211,9 @@
 }
 
 .iconButton,
-.refreshButton {
+.refreshButton,
+.universeRefreshButton {
   display: inline-flex;
-  width: 40px;
   height: 40px;
   align-items: center;
   justify-content: center;
@@ -222,6 +222,19 @@
   background: #0f171f;
   color: #cbd5e1;
   cursor: pointer;
+}
+
+.iconButton,
+.refreshButton {
+  width: 40px;
+}
+
+.universeRefreshButton {
+  width: auto;
+  padding: 0 12px;
+  color: #d8f3ff;
+  font-size: 12px;
+  font-weight: 850;
 }
 
 .controlBand {
@@ -1081,6 +1094,7 @@
   .watchButtonActive:hover,
   .marketTab:hover,
   .refreshButton:hover,
+  .universeRefreshButton:hover,
   .rangeTabs button:hover,
   .chartTypeTabs button:hover,
   .simActions button:hover,

@@ -73,7 +73,38 @@ type ThemeUniverse = {
   name: string;
   nameKo: string;
   region: MarketScope;
+  description?: string;
+  source?: string;
   stocks: Stock[];
+};
+
+type ThemeUniverseApiHolding = {
+  symbol: string;
+  name: string;
+  local_name: string;
+  market: string;
+  region: MarketScope;
+  currency: "USD" | "KRW";
+  sector: string;
+  sector_ko: string;
+  market_cap_rank: number;
+  market_cap_bucket: "mega-cap" | "large-cap";
+};
+
+type ThemeUniverseApiTheme = {
+  key: string;
+  name: string;
+  name_ko?: string;
+  description: string;
+  sector: string;
+  top_market_cap: ThemeUniverseApiHolding[];
+};
+
+type ThemeUniverseApiResponse = {
+  source: string;
+  count: number;
+  themes: ThemeUniverseApiTheme[];
+  notes: string[];
 };
 
 type Position = {
@@ -81,6 +112,7 @@ type Position = {
   shares: number;
   entryPrice: number;
   entryValue: number;
+  entryFee: number;
 };
 
 type KisQuote = {
@@ -138,6 +170,9 @@ type DataStatus = "idle" | "loading" | "ready" | "error";
 const ranges: RangeKey[] = ["LIVE", "1D", "1W", "1M", "1Y", "5Y", "ALL"];
 const initialCash = 10_000_000;
 const usdKrw = 1380;
+const commissionRate = 0.00015;
+const estimatedSlippageRate = 0.0005;
+const oneWayTradingCostRate = commissionRate + estimatedSlippageRate;
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 
 const copy = {
@@ -473,6 +508,71 @@ function buildUniverse(): ThemeUniverse[] {
   }));
 }
 
+function stockFallbackPrice(symbol: string, region: MarketScope, rank: number) {
+  const fallbackStock = buildUniverse()
+    .flatMap((theme) => theme.stocks)
+    .find((stock) => stock.symbol === symbol);
+
+  if (fallbackStock) {
+    return {
+      price: fallbackStock.price,
+      change: fallbackStock.change,
+      marketCap: fallbackStock.marketCap,
+    };
+  }
+
+  const price = region === "domestic" ? 18000 + rank * 26500 : 48 + rank * 37;
+
+  return {
+    price,
+    change: 0.3 + (rank % 4) * 0.34,
+    marketCap: region === "domestic" ? 900000 - rank * 56000 : 2200000 - rank * 128000,
+  };
+}
+
+function universeFromApi(payload: ThemeUniverseApiResponse): ThemeUniverse[] {
+  if (!payload.themes.length) {
+    return buildUniverse();
+  }
+
+  return payload.themes.map((theme) => ({
+    id: theme.key,
+    name: theme.name,
+    nameKo: theme.name_ko ?? theme.name,
+    description: theme.description,
+    region: theme.top_market_cap[0]?.region ?? "overseas",
+    source: payload.source,
+    stocks: theme.top_market_cap.map((holding) => {
+      const fallback = stockFallbackPrice(holding.symbol, holding.region, holding.market_cap_rank);
+      const price = fallback.price;
+      const change = fallback.change;
+
+      return {
+        symbol: holding.symbol,
+        name: holding.name,
+        localName: holding.local_name,
+        market: holding.market,
+        region: holding.region,
+        currency: holding.currency,
+        price,
+        change,
+        changeAmount: price * (change / 100),
+        open: price / (1 + change / 100),
+        high: price * 1.012,
+        low: price * 0.988,
+        volume: 900000 + holding.market_cap_rank * 117000,
+        sector: holding.sector,
+        sectorKo: holding.sector_ko,
+        marketCap: fallback.marketCap,
+        rank: holding.market_cap_rank,
+        signal: stockSignal(change),
+        strategy: holding.market_cap_rank <= 3 ? "API theme rotation TOP3" : "API theme TOP10",
+        series: buildSeries(price, change, holding.market_cap_rank + theme.key.length),
+      };
+    }),
+  }));
+}
+
 function stockSignal(change: number): Signal {
   if (change >= 1) {
     return "Buy";
@@ -554,6 +654,14 @@ function priceToKrw(stock: Stock) {
   return stock.currency === "KRW" ? stock.price : stock.price * usdKrw;
 }
 
+function liquidationValue(position: Position, stock: Stock | undefined) {
+  if (!stock) {
+    return 0;
+  }
+
+  return position.shares * priceToKrw(stock) * (1 - oneWayTradingCostRate);
+}
+
 function formatCompactNumber(value: number | null | undefined) {
   if (!value) {
     return "-";
@@ -579,12 +687,27 @@ function movingAverage(points: ChartPoint[], windowSize: number) {
   return slice.reduce((sum, point) => sum + point.close, 0) / Math.max(slice.length, 1);
 }
 
-function momentumScore(stock: Stock) {
+function stockMovingAverageTrend(stock: Stock) {
   const points = stock.series.LIVE;
   const fast = movingAverage(points, 8);
+  const previousFast = movingAverage(points.slice(0, -4), 8);
   const slow = movingAverage(points, 26);
+  const fastSpread = ((fast - slow) / slow) * 100;
+  const slope = ((fast - previousFast) / previousFast) * 100;
 
-  return ((fast - slow) / slow) * 100 + stock.change * 0.25;
+  return {
+    fast,
+    previousFast,
+    slow,
+    rising: fast > previousFast && fast > slow,
+    score: fastSpread + slope * 2,
+  };
+}
+
+function momentumScore(stock: Stock) {
+  const trend = stockMovingAverageTrend(stock);
+
+  return trend.rising ? trend.score + stock.change * 0.2 : trend.score * 0.35;
 }
 
 function themeMomentum(theme: ThemeUniverse) {
@@ -593,14 +716,28 @@ function themeMomentum(theme: ThemeUniverse) {
 
 function isMovingAverageRollingOver(theme: ThemeUniverse) {
   const lastThree = theme.stocks.slice(0, 10).map((stock) => {
-    const points = stock.series.LIVE;
-    const current = movingAverage(points, 8);
-    const previous = movingAverage(points.slice(0, -4), 8);
+    const trend = stockMovingAverageTrend(stock);
 
-    return current < previous;
+    return trend.fast < trend.previousFast || trend.fast < trend.slow;
   });
 
   return lastThree.filter(Boolean).length >= 6;
+}
+
+function themeSparklinePath(theme: ThemeUniverse, width = 142, height = 34) {
+  const points = theme.stocks.slice(0, 10).map((stock) => momentumScore(stock));
+  const min = Math.min(...points);
+  const max = Math.max(...points);
+  const spread = max - min || 1;
+
+  return points
+    .map((value, index) => {
+      const x = (index / Math.max(points.length - 1, 1)) * width;
+      const y = height - ((value - min) / spread) * height;
+
+      return `${index === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
+    })
+    .join(" ");
 }
 
 function xFor(index: number, count: number, width: number, paddingLeft: number, paddingRight: number) {
@@ -718,6 +855,8 @@ export default function StockDashboard() {
   const [positions, setPositions] = useState<Position[]>([]);
   const [tradeLog, setTradeLog] = useState<string[]>(["Ready: 10,000,000 KRW paper account"]);
   const [tick, setTick] = useState(0);
+  const [activeNav, setActiveNav] = useState("home");
+  const [statusMessage, setStatusMessage] = useState("자동 전략 대기 중");
 
   const t = copy[language];
   const stocks = useMemo(() => universes.flatMap((theme) => theme.stocks), [universes]);
@@ -748,6 +887,35 @@ export default function StockDashboard() {
     stocks.find((stock) => stock.symbol === selectedSymbol && stock.region === marketScope) ??
     marketStocks[0] ??
     stocks[0];
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    async function loadThemeUniverse() {
+      try {
+        const response = await fetch(`${apiBaseUrl}/universe/themes`, { signal: controller.signal });
+
+        if (!response.ok) {
+          return;
+        }
+
+        const payload = (await response.json()) as ThemeUniverseApiResponse;
+        const nextUniverses = universeFromApi(payload);
+
+        if (!nextUniverses.length) {
+          return;
+        }
+
+        setUniverses(nextUniverses);
+      } catch {
+        return;
+      }
+    }
+
+    loadThemeUniverse();
+
+    return () => controller.abort();
+  }, []);
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
@@ -855,13 +1023,18 @@ export default function StockDashboard() {
     const timeoutId = window.setTimeout(() => {
       const portfolioValue = positions.reduce((sum, position) => {
         const stock = stocks.find((item) => item.symbol === position.symbol);
-        return sum + (stock ? position.shares * priceToKrw(stock) : 0);
+        return sum + liquidationValue(position, stock);
       }, cash);
       const lossTriggered = positions.some((position) => {
         const stock = stocks.find((item) => item.symbol === position.symbol);
-        return stock ? priceToKrw(stock) <= position.entryPrice * 0.98 : false;
+        return stock ? liquidationValue(position, stock) <= position.entryValue * 0.98 : false;
       });
-      const shouldExit = lossTriggered || isMovingAverageRollingOver(activeTheme) || tick % 390 >= 385;
+      const tradingDaySeconds = 390 * 60;
+      const closeWindowSeconds = 5 * 60;
+      const isCloseWindow = tick % tradingDaySeconds >= tradingDaySeconds - closeWindowSeconds;
+      const maRollingOver = isMovingAverageRollingOver(activeTheme);
+      const shouldExit = lossTriggered || maRollingOver || isCloseWindow;
+      const canEnter = !maRollingOver && !isCloseWindow;
       const currentSymbols = positions.map((position) => position.symbol).sort().join(",");
       const targetSymbols = targetStocks.map((stock) => stock.symbol).sort().join(",");
 
@@ -869,31 +1042,44 @@ export default function StockDashboard() {
         setCash(portfolioValue);
         setPositions([]);
         setTradeLog((log) => [
-          `${new Date().toLocaleTimeString("ko-KR")} SELL ${shouldExit ? "risk/exit" : "rotation"} ${formatMoney(portfolioValue)}`,
+          `${new Date().toLocaleTimeString("ko-KR")} SELL ${
+            lossTriggered ? "stop-loss" : isCloseWindow ? "pre-close" : maRollingOver ? "MA rollover" : "rotation"
+          } ${formatMoney(portfolioValue)} net of fees`,
           ...log.slice(0, 5),
         ]);
+        setStatusMessage(lossTriggered ? "2% 손절 매도 실행" : isCloseWindow ? "장마감 5분 전 청산" : "이동평균 꺾임 매도");
         return;
       }
 
-      if (!positions.length && cash > 1000) {
+      if (!positions.length && cash > 1000 && canEnter) {
         const allocation = cash / targetStocks.length;
         const nextPositions = targetStocks.map((stock) => {
           const entryPrice = priceToKrw(stock);
+          const effectiveEntryPrice = entryPrice * (1 + oneWayTradingCostRate);
 
           return {
             symbol: stock.symbol,
-            shares: allocation / entryPrice,
+            shares: allocation / effectiveEntryPrice,
             entryPrice,
             entryValue: allocation,
+            entryFee: allocation * oneWayTradingCostRate,
           };
         });
 
         setCash(0);
         setPositions(nextPositions);
         setTradeLog((log) => [
-          `${new Date().toLocaleTimeString("ko-KR")} BUY ${themeName(activeTheme, language)} TOP3`,
+          `${new Date().toLocaleTimeString("ko-KR")} BUY ${themeName(activeTheme, language)} TOP3 fee ${formatMoney(
+            cash * oneWayTradingCostRate,
+          )}`,
           ...log.slice(0, 5),
         ]);
+        setStatusMessage(`${themeName(activeTheme, language)} TOP3 자동 진입`);
+        return;
+      }
+
+      if (!positions.length && cash > 1000 && !canEnter) {
+        setStatusMessage(maRollingOver ? "이동평균 회복 대기 중" : "장마감 5분 전 신규 진입 중지");
       }
     }, 0);
 
@@ -930,7 +1116,7 @@ export default function StockDashboard() {
   const latestFetchedAt = stocks.find((stock) => stock.fetchedAt)?.fetchedAt;
   const accountValue = positions.reduce((sum, position) => {
     const stock = stocks.find((item) => item.symbol === position.symbol);
-    return sum + (stock ? position.shares * priceToKrw(stock) : 0);
+    return sum + liquidationValue(position, stock);
   }, cash);
   const pnl = accountValue - initialCash;
   const pnlRate = (pnl / initialCash) * 100;
@@ -963,13 +1149,13 @@ export default function StockDashboard() {
     },
   ];
   const navItems = [
-    { label: t.home, icon: Home },
-    { label: t.portfolio, icon: Briefcase },
-    { label: t.signals, icon: BarChart3 },
-    { label: t.automation, icon: Zap },
-    { label: t.backtest, icon: LineChart },
-    { label: t.reports, icon: FileText },
-    { label: t.settings, icon: Settings },
+    { id: "home", label: t.home, icon: Home },
+    { id: "portfolio", label: t.portfolio, icon: Briefcase },
+    { id: "signals", label: t.signals, icon: BarChart3 },
+    { id: "automation", label: t.automation, icon: Zap },
+    { id: "backtest", label: t.backtest, icon: LineChart },
+    { id: "reports", label: t.reports, icon: FileText },
+    { id: "settings", label: t.settings, icon: Settings },
   ];
 
   function selectMarket(nextScope: MarketScope) {
@@ -993,6 +1179,21 @@ export default function StockDashboard() {
     setCash(initialCash);
     setPositions([]);
     setTradeLog(["Reset: 10,000,000 KRW paper account"]);
+    setStatusMessage("모의 계좌를 10,000,000원으로 초기화");
+  }
+
+  function focusTheme(theme: ThemeUniverse) {
+    const firstStock = theme.stocks[0];
+
+    if (!firstStock) {
+      return;
+    }
+
+    setMarketScope(theme.region);
+    setSelectedSymbol(firstStock.symbol);
+    setQuery("");
+    setActivePoint(null);
+    setStatusMessage(`${themeName(theme, language)} TOP10 그래프 확인`);
   }
 
   function handleChartPointerMove(event: React.PointerEvent<SVGSVGElement>) {
@@ -1013,11 +1214,19 @@ export default function StockDashboard() {
           </div>
         </div>
         <nav className={styles.navList}>
-          {navItems.map((item, index) => {
+          {navItems.map((item) => {
             const Icon = item.icon;
 
             return (
-              <button className={index === 0 ? styles.navItemActive : styles.navItem} key={item.label} type="button">
+              <button
+                className={item.id === activeNav ? styles.navItemActive : styles.navItem}
+                key={item.id}
+                type="button"
+                onClick={() => {
+                  setActiveNav(item.id);
+                  setStatusMessage(`${item.label} 패널 선택`);
+                }}
+              >
                 <Icon size={18} />
                 {item.label}
               </button>
@@ -1062,10 +1271,23 @@ export default function StockDashboard() {
                 <option value="ko">{"\uD55C\uAD6D\uC5B4"}</option>
               </select>
             </label>
-            <button className={styles.iconButton} type="button" aria-label="Notifications">
+            <button
+              className={styles.iconButton}
+              type="button"
+              aria-label="Notifications"
+              onClick={() => setStatusMessage("자동매매 알림: 현재 모의 계좌만 사용 중")}
+            >
               <Bell size={18} />
             </button>
-            <button className={styles.iconButton} type="button" aria-label="Settings">
+            <button
+              className={styles.iconButton}
+              type="button"
+              aria-label="Settings"
+              onClick={() => {
+                setActiveNav("settings");
+                setStatusMessage("설정: 1초 갱신 / 모의투자 / 2% 손절");
+              }}
+            >
               <Settings size={18} />
             </button>
           </div>
@@ -1076,6 +1298,7 @@ export default function StockDashboard() {
             {(["domestic", "overseas"] as MarketScope[]).map((scope) => (
               <button
                 className={scope === marketScope ? styles.marketTabActive : styles.marketTab}
+                data-testid={`market-tab-${scope}`}
                 key={scope}
                 type="button"
                 onClick={() => selectMarket(scope)}
@@ -1210,6 +1433,7 @@ export default function StockDashboard() {
                 {t.updated} {formatFetchedAt(selectedStock.fetchedAt ?? latestFetchedAt, language)}
               </span>
               <span>Volume {formatCompactNumber(selectedStock.volume)}</span>
+              <span>{statusMessage}</span>
             </div>
 
             <div className={styles.chartControls}>
@@ -1218,6 +1442,7 @@ export default function StockDashboard() {
                   <button
                     key={type}
                     className={type === chartType ? styles.rangeActive : ""}
+                    data-testid={`chart-type-${type}`}
                     type="button"
                     onClick={() => setChartType(type)}
                   >
@@ -1231,6 +1456,7 @@ export default function StockDashboard() {
                   <button
                     key={rangeKey}
                     className={rangeKey === range ? styles.rangeActive : ""}
+                    data-testid={`range-${rangeKey}`}
                     type="button"
                     onClick={() => {
                       setRange(rangeKey);
@@ -1405,13 +1631,14 @@ export default function StockDashboard() {
                 <label className={styles.autoToggle}>
                   <input
                     checked={autoRun}
+                    data-testid="auto-run-toggle"
                     onChange={(event) => setAutoRun(event.currentTarget.checked)}
                     type="checkbox"
                   />
                   <span>{autoRun ? <Pause size={15} /> : <Play size={15} />}</span>
                   {autoRun ? t.stop : t.start}
                 </label>
-                <button type="button" onClick={resetSimulation}>
+                <button data-testid="simulation-reset" type="button" onClick={resetSimulation}>
                   <RotateCcw size={15} />
                   {t.reset}
                 </button>
@@ -1419,13 +1646,14 @@ export default function StockDashboard() {
               <div className={styles.ruleList}>
                 <span>{t.activeTheme}: {activeTheme ? themeName(activeTheme, language) : "-"}</span>
                 <span>{t.stopLoss}</span>
+                <span>거래비용 {(oneWayTradingCostRate * 100).toFixed(3)}% / 편도</span>
                 <span>{t.exitRule}</span>
               </div>
               <div className={styles.positionList}>
                 {positions.length ? (
                   positions.map((position) => {
                     const stock = stocks.find((item) => item.symbol === position.symbol);
-                    const value = stock ? position.shares * priceToKrw(stock) : 0;
+                    const value = liquidationValue(position, stock);
 
                     return (
                       <div key={position.symbol}>
@@ -1475,16 +1703,24 @@ export default function StockDashboard() {
             </div>
             <div className={styles.themeGrid}>
               {marketThemes.map((theme) => (
-                <button className={theme.id === activeTheme?.id ? styles.themeCardActive : styles.themeCard} key={theme.id} type="button">
+                <button
+                  className={theme.id === activeTheme?.id ? styles.themeCardActive : styles.themeCard}
+                  key={theme.id}
+                  type="button"
+                  onClick={() => focusTheme(theme)}
+                >
                   <span>{themeName(theme, language)}</span>
                   <strong>{themeMomentum(theme).toFixed(2)}</strong>
+                  <svg className={styles.themeSparkline} viewBox="0 0 142 34" aria-hidden="true">
+                    <path d={themeSparklinePath(theme)} />
+                  </svg>
                   <small>{theme.stocks.slice(0, 3).map((stock) => stock.symbol).join(" / ")}</small>
                 </button>
               ))}
             </div>
             <div className={styles.tradeLog}>
-              {tradeLog.map((entry) => (
-                <span key={entry}>{entry}</span>
+              {tradeLog.map((entry, index) => (
+                <span key={`${index}-${entry}`}>{entry}</span>
               ))}
             </div>
           </div>

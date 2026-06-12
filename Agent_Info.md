@@ -29,6 +29,9 @@ automated trading assistant.
 - `frontend/src/app/page.tsx`: frontend test page
 - `frontend/src/app/StockDashboard.tsx`: interactive stock dashboard prototype
 - `frontend/src/app/page.module.css`: test page styles
+- `frontend/playwright.config.ts`: Chrome-channel Playwright e2e settings for local dashboard QA
+- `frontend/tests/dashboard.spec.ts`: rendered dashboard interaction test for market tabs, chart mode,
+  paper-trading controls, theme graphs, and screenshots
 - `frontend/src/app/layout.tsx`: Next.js metadata and root layout
 - `nginx/nginx.conf`: reverse proxy for frontend and `/api/*`
 - `compose.yaml`: local multi-container stack
@@ -55,3 +58,5 @@ automated trading assistant.
 - `GET /universe/themes` returns curated theme/sector groups and top market-cap top 10 metadata.
 - The frontend dashboard now includes a denser brokerage-style candlestick chart, 1-second simulated
   ticks, a 10,000,000 KRW paper-trading account with reset, and a theme-rotation automation panel.
+- The paper-trading simulation applies a first-pass one-way trading cost assumption of 0.065%
+  (commission plus estimated slippage) so excessive round trips reduce simulated profit.

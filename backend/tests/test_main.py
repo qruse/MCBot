@@ -135,9 +135,12 @@ def test_read_theme_universe(client: TestClient) -> None:
 
     assert response.status_code == 200
     body = response.json()
-    assert body["count"] == 4
+    assert body["count"] == 6
     assert body["themes"][0]["key"] == "semiconductors"
     assert body["themes"][0]["top_market_cap"][0]["market_cap_rank"] == 1
+    assert body["themes"][-2]["name_ko"] == "국내 반도체"
+    assert body["themes"][-2]["top_market_cap"][0]["symbol"] == "005930"
+    assert len(body["themes"][-1]["top_market_cap"]) == 10
 
 
 @pytest.mark.parametrize(

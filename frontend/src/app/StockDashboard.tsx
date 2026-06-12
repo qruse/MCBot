@@ -433,6 +433,26 @@ function pointLabel(range: RangeKey, index: number, count: number) {
   return `P-${index + 1}`;
 }
 
+function pointTimestamp(range: RangeKey, index: number, count: number) {
+  const end = new Date(2026, 5, 12, 15, 30, 0);
+  const ratio = index / Math.max(count - 1, 1);
+
+  if (range === "LIVE" || range === "1D") {
+    const start = new Date(2026, 5, 12, 9, 0, 0).getTime();
+    return new Date(start + (end.getTime() - start) * ratio).toISOString();
+  }
+
+  const intervalMs = {
+    "1W": 60 * 60 * 1000,
+    "1M": 6 * 60 * 60 * 1000,
+    "1Y": 24 * 60 * 60 * 1000,
+    "5Y": 7 * 24 * 60 * 60 * 1000,
+    ALL: 30 * 24 * 60 * 60 * 1000,
+  }[range];
+
+  return new Date(end.getTime() - (count - index - 1) * intervalMs).toISOString();
+}
+
 function pointsForRange(range: RangeKey) {
   return {
     LIVE: 84,
@@ -464,6 +484,7 @@ function buildSeries(price: number, change: number, seed: number): Record<RangeK
 
         return {
           label: pointLabel(range, index, count),
+          timestamp: pointTimestamp(range, index, count),
           value: close,
           open,
           high: Math.max(open, close) + wick,
@@ -603,7 +624,11 @@ function pointFromHistoryCandle(candle: KisHistoryCandle): ChartPoint {
   };
 }
 
-function formatChartPointLabel(point: ChartPoint, range: RangeKey, language: Language) {
+function padDatePart(value: number) {
+  return String(value).padStart(2, "0");
+}
+
+function formatChartPointLabel(point: ChartPoint, range: RangeKey, _language: Language) {
   if (!point.timestamp) {
     return point.label;
   }
@@ -614,13 +639,22 @@ function formatChartPointLabel(point: ChartPoint, range: RangeKey, language: Lan
     return point.label;
   }
 
-  const locale = language === "ko" ? "ko-KR" : "en-US";
+  const year = date.getFullYear();
+  const shortYear = padDatePart(year % 100);
+  const month = padDatePart(date.getMonth() + 1);
+  const day = padDatePart(date.getDate());
+  const hour = padDatePart(date.getHours());
+  const minute = padDatePart(date.getMinutes());
 
   if (range === "LIVE" || range === "1D") {
-    return new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit" }).format(date);
+    return `${month}/${day} ${hour}:${minute}`;
   }
 
-  return new Intl.DateTimeFormat(locale, { month: "short", day: "2-digit" }).format(date);
+  if (range === "1W" || range === "1M") {
+    return `${shortYear}/${month}/${day} ${hour}:${minute}`;
+  }
+
+  return `${year}/${month}/${day}`;
 }
 
 function stockName(stock: Stock, language: Language) {

@@ -62,6 +62,8 @@ automated trading assistant.
   falls back to seeded historical candles when very short realtime buffers would make the chart flat.
 - The main chart uses a classic brokerage-style candlestick view with 5/20/60/120 moving averages,
   high/low labels, right-side price ticks, volume bars, and realtime quote scaling over stable history.
+- Chart x-axis labels use deterministic date/time formatting: intraday ranges show month/day and
+  hour/minute, mid ranges include short year/month/day and hour/minute, and long ranges show dates.
 - The paper-trading simulation applies a first-pass one-way trading cost assumption of 0.065%
   (commission plus estimated slippage) so excessive round trips reduce simulated profit.
 - The automation guardrails intentionally throttle short-term churn with a 3-minute minimum hold,

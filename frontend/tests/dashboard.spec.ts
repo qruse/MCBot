@@ -13,6 +13,7 @@ test("brokerage dashboard controls work", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Money Copy Bot" })).toBeVisible();
   await expect(page.getByTestId("auto-run-toggle")).toBeChecked();
   await expect(page.getByTestId("simulation-reset")).toBeVisible();
+  await expect(page.getByTestId("paper-cash-input")).toHaveValue("100000000");
   await expect(page.locator('g[class*="candleLayer"] rect')).toHaveCount(84);
   await expect(page.locator('path[class*="ma5Path"]')).toHaveCount(1);
   await expect(page.locator('path[class*="ma20Path"]')).toHaveCount(1);
@@ -56,8 +57,11 @@ test("brokerage dashboard controls work", async ({ page }) => {
   await expect(page.getByTestId("auto-run-toggle")).not.toBeChecked();
 
   await page.getByTestId("simulation-reset").click();
-  await expect(page.getByText("Reset: 10,000,000 KRW paper account")).toBeVisible();
-  await expect(page.getByText(/10,000,000/).first()).toBeVisible();
+  await expect(page.getByText("Reset: 100,000,000 KRW paper account")).toBeVisible();
+  await expect(page.getByText(/100,000,000/).first()).toBeVisible();
+  await page.getByTestId("paper-cash-input").fill("50000000");
+  await page.getByTestId("simulation-reset").click();
+  await expect(page.getByText("Reset: 50,000,000 KRW paper account")).toBeVisible();
 
   await page.screenshot({ path: "../test_logs/frontend-dashboard-qa-desktop.png", fullPage: false });
   await page.setViewportSize({ width: 390, height: 844 });

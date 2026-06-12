@@ -168,7 +168,7 @@ type KisHistoryResponse = {
 type DataStatus = "idle" | "loading" | "ready" | "error";
 
 const ranges: RangeKey[] = ["LIVE", "1D", "1W", "1M", "1Y", "5Y", "ALL"];
-const initialCash = 10_000_000;
+const defaultPaperCash = 100_000_000;
 const usdKrw = 1380;
 const kisDomesticOnlineCommissionRate = 0.000140527;
 const kisUsOnlineCommissionRate = 0.0025;
@@ -960,9 +960,11 @@ export default function StockDashboard() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [universeRefreshKey, setUniverseRefreshKey] = useState(0);
   const [autoRun, setAutoRun] = useState(true);
-  const [cash, setCash] = useState(initialCash);
+  const [paperInitialCash, setPaperInitialCash] = useState(defaultPaperCash);
+  const [paperCashInput, setPaperCashInput] = useState(String(defaultPaperCash));
+  const [cash, setCash] = useState(defaultPaperCash);
   const [positions, setPositions] = useState<Position[]>([]);
-  const [tradeLog, setTradeLog] = useState<string[]>(["Ready: 10,000,000 KRW paper account"]);
+  const [tradeLog, setTradeLog] = useState<string[]>([`Ready: ${defaultPaperCash.toLocaleString("en-US")} KRW paper account`]);
   const [tick, setTick] = useState(0);
   const [activeNav, setActiveNav] = useState("home");
   const [statusMessage, setStatusMessage] = useState("자동 전략 대기 중");
@@ -1322,8 +1324,8 @@ export default function StockDashboard() {
     const stock = stocks.find((item) => item.symbol === position.symbol);
     return sum + liquidationValue(position, stock);
   }, cash);
-  const pnl = accountValue - initialCash;
-  const pnlRate = (pnl / initialCash) * 100;
+  const pnl = accountValue - paperInitialCash;
+  const pnlRate = (pnl / paperInitialCash) * 100;
   const dataModeLabel =
     dataStatus === "loading"
       ? t.loadingQuotes
@@ -1380,10 +1382,15 @@ export default function StockDashboard() {
   }
 
   function resetSimulation() {
-    setCash(initialCash);
+    const parsedInputCash = Number(paperCashInput);
+    const nextInitialCash = Math.max(1_000_000, Math.round(Number.isFinite(parsedInputCash) ? parsedInputCash : defaultPaperCash));
+
+    setPaperInitialCash(nextInitialCash);
+    setPaperCashInput(String(nextInitialCash));
+    setCash(nextInitialCash);
     setPositions([]);
-    setTradeLog(["Reset: 10,000,000 KRW paper account"]);
-    setStatusMessage("모의 계좌를 10,000,000원으로 초기화");
+    setTradeLog([`Reset: ${nextInitialCash.toLocaleString("en-US")} KRW paper account`]);
+    setStatusMessage(`모의 계좌를 ${formatMoney(nextInitialCash)}으로 초기화`);
   }
 
   function focusTheme(theme: ThemeUniverse) {
@@ -1869,6 +1876,20 @@ export default function StockDashboard() {
                 <strong>{t.portfolioSignalPanel}</strong>
               </div>
               <div className={styles.accountGrid}>
+                <label className={styles.capitalInput}>
+                  <span>모의 원금</span>
+                  <input
+                    data-testid="paper-cash-input"
+                    inputMode="numeric"
+                    min={1_000_000}
+                    step={1_000_000}
+                    type="number"
+                    value={paperCashInput}
+                    onChange={(event) => {
+                      setPaperCashInput(event.currentTarget.value);
+                    }}
+                  />
+                </label>
                 <div>
                   <span>{t.accountValue}</span>
                   <strong>{formatMoney(accountValue)}</strong>

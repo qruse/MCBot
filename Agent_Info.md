@@ -57,7 +57,8 @@ automated trading assistant.
 - Frontend development is served on `http://localhost:3001` for this app.
 - `GET /universe/themes` returns curated theme/sector groups and top market-cap top 10 metadata.
 - The frontend dashboard now includes a denser brokerage-style candlestick chart, 1-second simulated
-  ticks, a 10,000,000 KRW paper-trading account with reset, and a theme-rotation automation panel.
+  ticks, a configurable paper-trading account defaulting to 100,000,000 KRW with reset, and a
+  theme-rotation automation panel.
 - The dashboard stock list is grouped by theme, supports domestic/overseas paper-trading views, and
   falls back to seeded historical candles when very short realtime buffers would make the chart flat.
 - The main chart uses a classic brokerage-style candlestick view with 5/20/60/120 moving averages,
@@ -69,7 +70,7 @@ automated trading assistant.
 - The paper-trading simulation uses Korea Investment Securities fee assumptions: BanKIS domestic
   online KRX commission at 0.0140527%, and US online overseas trading at 0.25% buy / 0.25206% sell
   including the US SEC sell fee.
-- Paper-trading orders allocate the 10,000,000 KRW account across the target top 3 but only buy
+- Paper-trading orders allocate the configured account balance across the target top 3 but only buy
   whole shares; any amount that cannot buy at least one more share remains as cash.
 - The dashboard has a theme/universe refresh button that refetches `/universe/themes` so market-cap
   top lists can be refreshed without reloading the app.

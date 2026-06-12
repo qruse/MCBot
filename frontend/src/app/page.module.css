@@ -875,6 +875,27 @@
   padding: 9px;
 }
 
+.capitalInput {
+  display: grid;
+  gap: 5px;
+  border: 1px solid #1e2936;
+  border-radius: 6px;
+  background: #0b1117;
+  padding: 9px;
+}
+
+.capitalInput input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #ffffff;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 900;
+}
+
 .simActions {
   display: grid;
   grid-template-columns: 1fr 1fr;

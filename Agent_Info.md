@@ -69,6 +69,9 @@ automated trading assistant.
   session, while `1D` renders a 24-hour window with dark-theme chart styling.
 - During 1-second simulated ticks, `LIVE` appends new short-interval candles, while `1D` keeps its
   24-hour candle count fixed and updates only the active final candle's OHLC/volume.
+- Frontend charts now prefer real `/quotes/kis/history` candles when enough history is available,
+  show the chart source and candle count, and only use the seeded sample series as an explicit
+  fallback when stored KIS history is still too sparse.
 - The paper-trading simulation uses Korea Investment Securities fee assumptions: BanKIS domestic
   online KRX commission at 0.0140527%, and US online overseas trading at 0.25% buy / 0.25206% sell
   including the US SEC sell fee.

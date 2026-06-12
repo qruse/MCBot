@@ -35,6 +35,7 @@ type Signal = "Buy" | "Watch" | "Hold";
 type ChartPoint = {
   label: string;
   timestamp?: string;
+  source?: string;
   value: number;
   open: number;
   high: number;
@@ -622,6 +623,7 @@ function pointFromHistoryCandle(candle: KisHistoryCandle): ChartPoint {
   return {
     label: candle.timestamp,
     timestamp: candle.timestamp,
+    source: candle.source,
     value: candle.close,
     open: candle.open,
     high: candle.high,
@@ -909,6 +911,18 @@ function axisTickIndexes(count: number) {
   const tickCount = 6;
   const step = Math.max(1, Math.floor((count - 1) / (tickCount - 1)));
   return [...new Set(Array.from({ length: tickCount }, (_, index) => Math.min(count - 1, index * step)).concat(count - 1))];
+}
+
+function minimumRealHistoryPoints(range: RangeKey) {
+  if (range === "LIVE") {
+    return 2;
+  }
+
+  if (range === "1D") {
+    return 12;
+  }
+
+  return 2;
 }
 
 function mergeLiveQuotes(universes: ThemeUniverse[], quotes: KisQuote[]) {
@@ -1271,36 +1285,11 @@ export default function StockDashboard() {
 
   const selectedFallbackPoints = selectedStock.series[range];
   const selectedHistoryPoints = chartHistory[selectedStock.symbol]?.[range];
-  const latestRealtimePoint = selectedHistoryPoints?.[selectedHistoryPoints.length - 1];
-  const lastFallbackPoint = selectedFallbackPoints[selectedFallbackPoints.length - 1];
-  const realtimeScale =
-    latestRealtimePoint && lastFallbackPoint?.close ? latestRealtimePoint.close / lastFallbackPoint.close : 1;
-  const selectedPoints =
-    latestRealtimePoint && Number.isFinite(realtimeScale) && realtimeScale > 0 && (range === "LIVE" || range === "1D")
-      ? selectedFallbackPoints.map((point, index) => {
-          const scaledPoint = {
-            ...point,
-            value: point.value * realtimeScale,
-            open: point.open * realtimeScale,
-            high: point.high * realtimeScale,
-            low: point.low * realtimeScale,
-            close: point.close * realtimeScale,
-          };
-
-          if (index !== selectedFallbackPoints.length - 1) {
-            return scaledPoint;
-          }
-
-          return {
-            ...scaledPoint,
-            value: latestRealtimePoint.close,
-            close: latestRealtimePoint.close,
-            high: Math.max(scaledPoint.high, latestRealtimePoint.high, latestRealtimePoint.close),
-            low: Math.min(scaledPoint.low, latestRealtimePoint.low, latestRealtimePoint.close),
-            volume: latestRealtimePoint.volume || point.volume,
-          };
-        })
-      : selectedFallbackPoints;
+  const hasRealChartHistory = Boolean(selectedHistoryPoints?.length && selectedHistoryPoints.length >= minimumRealHistoryPoints(range));
+  const selectedPoints = hasRealChartHistory && selectedHistoryPoints ? selectedHistoryPoints : selectedFallbackPoints;
+  const chartSourceLabel = hasRealChartHistory
+    ? `${selectedPoints[0]?.source ?? "KIS chart history"} · ${selectedPoints.length} candles`
+    : `Sample fallback · ${selectedPoints.length} candles`;
   const selectedValues = selectedPoints.map((point) => point.value);
   const selectedIndex = Math.min(activePoint ?? selectedPoints.length - 1, selectedPoints.length - 1);
   const selectedPoint = selectedPoints[selectedIndex];
@@ -1686,6 +1675,7 @@ export default function StockDashboard() {
             </div>
             <div className={styles.sourceMeta}>
               <span>{selectedStock.source ?? "Sample + 1s simulation"}</span>
+              <span>{chartSourceLabel}</span>
               <span>
                 {t.updated} {formatFetchedAt(selectedStock.fetchedAt ?? latestFetchedAt, language)}
               </span>

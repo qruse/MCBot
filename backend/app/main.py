@@ -21,6 +21,7 @@ from app.market_data import (
     start_market_data_scheduler,
     stop_market_data_scheduler,
 )
+from app.universe import ThemeUniverseResponse, get_theme_universe
 
 
 class HealthResponse(BaseModel):
@@ -104,3 +105,8 @@ async def read_kis_watchlist_history(
         return await get_watchlist_chart(symbol, range_key)
     except KisServiceError as error:
         raise HTTPException(status_code=error.status_code, detail=error.message) from error
+
+
+@app.get("/universe/themes", response_model=ThemeUniverseResponse)
+def read_theme_universe() -> ThemeUniverseResponse:
+    return get_theme_universe()

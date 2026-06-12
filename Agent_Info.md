@@ -21,6 +21,8 @@ automated trading assistant.
 - `backend/app/market_data.py`: background 10-second KIS quote refresh scheduler, MongoDB latest
   quote persistence, quote history persistence, intraday chart aggregation, and latest-or-refresh
   API helper
+- `backend/app/universe.py`: curated first-pass theme universe API data with theme-level top
+  market-cap top 10 metadata for dashboard strategy experiments
 - `backend/tests/test_main.py`: backend endpoint tests
 - `backend/Dockerfile`: production backend container image
 - `frontend/Dockerfile`: production Next.js standalone container image
@@ -46,6 +48,10 @@ automated trading assistant.
 - `GET /quotes/kis/history/{symbol}?range=LIVE|1D|1W|1M|1Y|5Y|ALL` returns chart-ready OHLC
   candles. `LIVE`/`1D` use Mongo scheduled KIS quote history; longer ranges use KIS chart data.
 - FastAPI startup launches a background market data scheduler. It refreshes KIS watchlist quotes
-  every `MARKET_DATA_REFRESH_SECONDS` seconds, upserts `market_quote_latest`, and appends
+  every `MARKET_DATA_REFRESH_SECONDS` seconds, defaulting to 1 second for first-pass trading
+  simulation work, upserts `market_quote_latest`, and appends
   `market_quote_history` so the service keeps data current even when the frontend is not open.
 - Frontend development is served on `http://localhost:3001` for this app.
+- `GET /universe/themes` returns curated theme/sector groups and top market-cap top 10 metadata.
+- The frontend dashboard now includes a denser brokerage-style candlestick chart, 1-second simulated
+  ticks, a 10,000,000 KRW paper-trading account with reset, and a theme-rotation automation panel.

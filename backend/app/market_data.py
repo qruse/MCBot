@@ -23,7 +23,7 @@ from app.kis import (
     get_watchlist_quotes,
 )
 
-DEFAULT_REFRESH_SECONDS = 10
+DEFAULT_REFRESH_SECONDS = 1
 LATEST_COLLECTION = "market_quote_latest"
 HISTORY_COLLECTION = "market_quote_history"
 RUNS_COLLECTION = "market_refresh_runs"

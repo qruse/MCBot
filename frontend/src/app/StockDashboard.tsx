@@ -1,15 +1,19 @@
 "use client";
 
 import {
-  AlertCircle,
+  Activity,
   BarChart3,
   Bell,
+  Bot,
   Briefcase,
+  CandlestickChart,
   FileText,
   Home,
   LineChart,
-  Plus,
+  Pause,
+  Play,
   RefreshCw,
+  RotateCcw,
   Search,
   Settings,
   Star,
@@ -26,6 +30,18 @@ type RangeKey = "LIVE" | "1D" | "1W" | "1M" | "1Y" | "5Y" | "ALL";
 type ChartType = "candle" | "line";
 type MarketScope = "domestic" | "overseas";
 type Language = "en" | "ko";
+type Signal = "Buy" | "Watch" | "Hold";
+
+type ChartPoint = {
+  label: string;
+  timestamp?: string;
+  value: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+};
 
 type Stock = {
   symbol: string;
@@ -45,19 +61,26 @@ type Stock = {
   source?: string;
   sector: string;
   sectorKo: string;
-  signal: "Buy" | "Watch" | "Hold";
+  marketCap: number;
+  rank: number;
+  signal: Signal;
   strategy: string;
   series: Record<RangeKey, ChartPoint[]>;
 };
 
-type ChartPoint = {
-  label: string;
-  timestamp?: string;
-  value: number;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
+type ThemeUniverse = {
+  id: string;
+  name: string;
+  nameKo: string;
+  region: MarketScope;
+  stocks: Stock[];
+};
+
+type Position = {
+  symbol: string;
+  shares: number;
+  entryPrice: number;
+  entryValue: number;
 };
 
 type KisQuote = {
@@ -112,52 +135,36 @@ type KisHistoryResponse = {
 
 type DataStatus = "idle" | "loading" | "ready" | "error";
 
-type Candle = {
-  label: string;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-};
-
 const ranges: RangeKey[] = ["LIVE", "1D", "1W", "1M", "1Y", "5Y", "ALL"];
-const rangePointCounts: Record<RangeKey, number> = {
-  LIVE: 48,
-  "1D": 48,
-  "1W": 35,
-  "1M": 40,
-  "1Y": 52,
-  "5Y": 60,
-  ALL: 72,
-};
+const initialCash = 10_000_000;
+const usdKrw = 1380;
+const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 
 const copy = {
   en: {
     appName: "Money Copy Bot",
-    appSubtitle: "Stock research and automation cockpit",
     domestic: "Domestic",
     overseas: "Overseas",
     searchTitle: "Stock search",
-    searchDescription: "Search by symbol, company, market, or sector.",
-    searchPlaceholder: "Search AAPL, 005930, semiconductor...",
+    searchPlaceholder: "Search symbol, company, market, or theme",
     language: "Language",
     market: "Market",
     open: "Open",
-    dataMode: "Sample data",
+    dataMode: "Sample universe",
     liveDataMode: "KIS live quotes",
     loadingQuotes: "Loading quotes",
     quoteError: "Quote sync error",
     refreshQuotes: "Refresh quotes",
     updated: "Updated",
-    deskMode: "Research desk",
+    deskMode: "Trading desk",
     rangeMove: "Range move",
-    rangeHigh: "Range high",
-    rangeLow: "Range low",
+    rangeHigh: "High",
+    rangeLow: "Low",
     executionMode: "Execution",
     paperOnly: "Paper only",
-    signalQueue: "Signal queue",
+    signalQueue: "Signal",
     dataBridge: "Data bridge",
-    manualReview: "Manual review",
+    autoTrading: "Auto trading",
     home: "Home",
     portfolio: "Portfolio",
     signals: "Signals",
@@ -166,7 +173,7 @@ const copy = {
     reports: "Reports",
     settings: "Settings",
     broker: "Broker",
-    demoAccount: "Demo Account",
+    demoAccount: "Paper Account",
     connected: "Connected",
     buyingPower: "Buying Power",
     results: "Results",
@@ -175,15 +182,28 @@ const copy = {
     tracked: "tracked",
     lastPrice: "Last price",
     portfolioSignal: "Portfolio signal",
-    sector: "Sector",
-    addToWatchlist: "Add to watchlist",
-    watching: "Watching",
+    sector: "Theme",
     chartRange: "Chart range",
     chartType: "Chart type",
     candle: "Candles",
     line: "Line",
+    point: "Point",
+    researchNotes: "Theme TOP10",
+    portfolioSignalPanel: "Auto strategy",
+    sentiment: "Momentum",
+    topSignals: "Target TOP3",
+    noMatches: "No matching symbols",
+    reset: "Reset",
+    start: "Run",
+    stop: "Pause",
+    accountValue: "Account value",
+    cash: "Cash",
+    pnl: "P/L",
+    activeTheme: "Active theme",
+    stopLoss: "Stop loss",
+    exitRule: "Exit rule",
     rangeLabels: {
-      LIVE: "Today live",
+      LIVE: "Live",
       "1D": "1D",
       "1W": "1W",
       "1M": "1M",
@@ -191,42 +211,31 @@ const copy = {
       "5Y": "5Y",
       ALL: "All",
     },
-    point: "Point",
-    researchNotes: "Research & Notes",
-    portfolioSignalPanel: "Portfolio signal",
-    sentiment: "Momentum score",
-    topSignals: "Top signals",
-    viewAll: "View all",
-    automationPreview: "Automation preview",
-    automationText: "Next step: connect brokerage APIs and replace sample data with live quotes.",
-    noMatches: "No matching symbols",
   },
   ko: {
     appName: "Money Copy Bot",
-    appSubtitle: "\uC8FC\uC2DD \uB9AC\uC11C\uCE58\uC640 \uC790\uB3D9\uB9E4\uB9E4 \uC791\uC5C5\uC2E4",
     domestic: "\uAD6D\uB0B4",
     overseas: "\uD574\uC678",
     searchTitle: "\uC885\uBAA9 \uAC80\uC0C9",
-    searchDescription: "\uD2F0\uCEE4, \uD68C\uC0AC\uBA85, \uC2DC\uC7A5, \uC139\uD130\uB85C \uAC80\uC0C9",
-    searchPlaceholder: "AAPL, 005930, semiconductor...",
+    searchPlaceholder: "\uD2F0\uCEE4, \uD68C\uC0AC, \uC2DC\uC7A5, \uD14C\uB9C8 \uAC80\uC0C9",
     language: "\uC5B8\uC5B4",
     market: "\uC2DC\uC7A5",
-    open: "\uC5F4\uB9BC",
-    dataMode: "\uC0D8\uD50C \uB370\uC774\uD130",
-    liveDataMode: "KIS \uC2E4\uC81C \uC2DC\uC138",
+    open: "\uAC1C\uC7A5",
+    dataMode: "\uC0D8\uD50C \uC720\uB2C8\uBC84\uC2A4",
+    liveDataMode: "KIS \uC2E4\uC2DC\uAC04 \uC2DC\uC138",
     loadingQuotes: "\uC2DC\uC138 \uBD88\uB7EC\uC624\uB294 \uC911",
     quoteError: "\uC2DC\uC138 \uC5F0\uB3D9 \uC624\uB958",
     refreshQuotes: "\uC2DC\uC138 \uC0C8\uB85C\uACE0\uCE68",
     updated: "\uAC31\uC2E0",
-    deskMode: "\uB9AC\uC11C\uCE58 \uB370\uC2A4\uD06C",
+    deskMode: "\uD2B8\uB808\uC774\uB529 \uB370\uC2A4\uD06C",
     rangeMove: "\uAE30\uAC04 \uB4F1\uB77D",
-    rangeHigh: "\uAE30\uAC04 \uACE0\uAC00",
-    rangeLow: "\uAE30\uAC04 \uC800\uAC00",
-    executionMode: "\uC2E4\uD589 \uBAA8\uB4DC",
-    paperOnly: "\uBAA8\uC758 \uC804\uC6A9",
-    signalQueue: "\uC2DC\uADF8\uB110 \uD050",
+    rangeHigh: "\uACE0\uAC00",
+    rangeLow: "\uC800\uAC00",
+    executionMode: "\uC2E4\uD589",
+    paperOnly: "\uBAA8\uC758",
+    signalQueue: "\uC2DC\uADF8\uB110",
     dataBridge: "\uB370\uC774\uD130 \uBE0C\uB9AC\uC9C0",
-    manualReview: "\uC218\uB3D9 \uAC80\uD1A0",
+    autoTrading: "\uC790\uB3D9 \uB2E8\uD0C0",
     home: "\uD648",
     portfolio: "\uD3EC\uD2B8\uD3F4\uB9AC\uC624",
     signals: "\uC2DC\uADF8\uB110",
@@ -235,24 +244,37 @@ const copy = {
     reports: "\uB9AC\uD3EC\uD2B8",
     settings: "\uC124\uC815",
     broker: "\uC99D\uAD8C\uC0AC",
-    demoAccount: "\uB370\uBAA8 \uACC4\uC88C",
+    demoAccount: "\uBAA8\uC758 \uACC4\uC88C",
     connected: "\uC5F0\uACB0\uB428",
-    buyingPower: "\uB9E4\uC218 \uAC00\uB2A5\uAE08\uC561",
+    buyingPower: "\uB9E4\uC218 \uAC00\uB2A5\uAE08",
     results: "\uAC80\uC0C9 \uACB0\uACFC",
     symbols: "\uC885\uBAA9",
     watchlist: "\uAD00\uC2EC\uC885\uBAA9",
-    tracked: "\uAC1C \uCD94\uC801",
+    tracked: "\uCD94\uC801",
     lastPrice: "\uD604\uC7AC\uAC00",
     portfolioSignal: "\uD3EC\uD2B8\uD3F4\uB9AC\uC624 \uC2DC\uADF8\uB110",
-    sector: "\uC139\uD130",
-    addToWatchlist: "\uAD00\uC2EC\uC885\uBAA9 \uCD94\uAC00",
-    watching: "\uAD00\uC2EC\uC885\uBAA9",
+    sector: "\uD14C\uB9C8",
     chartRange: "\uCC28\uD2B8 \uAE30\uAC04",
     chartType: "\uCC28\uD2B8 \uC720\uD615",
     candle: "\uBD09\uCC28\uD2B8",
     line: "\uC120\uCC28\uD2B8",
+    point: "\uC9C0\uC810",
+    researchNotes: "\uD14C\uB9C8 TOP10",
+    portfolioSignalPanel: "\uC790\uB3D9\uB9E4\uB9E4 \uC804\uB7B5",
+    sentiment: "\uBAA8\uBA58\uD140",
+    topSignals: "\uD22C\uC790 TOP3",
+    noMatches: "\uAC80\uC0C9 \uACB0\uACFC \uC5C6\uC74C",
+    reset: "\uCD08\uAE30\uD654",
+    start: "\uC2E4\uD589",
+    stop: "\uC77C\uC2DC\uC815\uC9C0",
+    accountValue: "\uCD1D \uD3C9\uAC00",
+    cash: "\uD604\uAE08",
+    pnl: "\uC218\uC775",
+    activeTheme: "\uC120\uD0DD \uD14C\uB9C8",
+    stopLoss: "2% \uC190\uC808",
+    exitRule: "\uC774\uD3C9 \uAEBC\uC9D0/\uC7A5\uB9C8\uAC10 5\uBD84",
     rangeLabels: {
-      LIVE: "\uC624\uB298 \uC2E4\uC2DC\uAC04",
+      LIVE: "\uC2E4\uC2DC\uAC04",
       "1D": "1D",
       "1W": "1W",
       "1M": "1M",
@@ -260,18 +282,83 @@ const copy = {
       "5Y": "5Y",
       ALL: "\uC804\uCCB4",
     },
-    point: "\uC9C0\uC810",
-    researchNotes: "\uB9AC\uC11C\uCE58 & \uB178\uD2B8",
-    portfolioSignalPanel: "\uD3EC\uD2B8\uD3F4\uB9AC\uC624 \uC2DC\uADF8\uB110",
-    sentiment: "\uBAA8\uBA58\uD140 \uC810\uC218",
-    topSignals: "\uC8FC\uC694 \uC2DC\uADF8\uB110",
-    viewAll: "\uC804\uCCB4 \uBCF4\uAE30",
-    automationPreview: "\uC790\uB3D9\uD654 \uBBF8\uB9AC\uBCF4\uAE30",
-    automationText:
-      "\uB2E4\uC74C \uB2E8\uACC4: \uC99D\uAD8C\uC0AC API\uB97C \uC5F0\uACB0\uD558\uACE0 \uC0D8\uD50C \uB370\uC774\uD130\uB97C \uC2E4\uC2DC\uAC04 \uC2DC\uC138\uB85C \uAD50\uCCB4\uD569\uB2C8\uB2E4.",
-    noMatches: "\uAC80\uC0C9 \uACB0\uACFC \uC5C6\uC74C",
   },
 } as const;
+
+const themeSeed = [
+  {
+    id: "ai-semi",
+    name: "AI Semiconductors",
+    nameKo: "AI \uBC18\uB3C4\uCCB4",
+    region: "overseas" as const,
+    stocks: [
+      ["NVDA", "NVIDIA Corp.", "\uC5D4\uBE44\uB514\uC544", "NASDAQ", 214.75, 2.18, 5_280_000],
+      ["AVGO", "Broadcom Inc.", "\uBE0C\uB85C\uB4DC\uCEF4", "NASDAQ", 1812.4, 1.24, 745_000],
+      ["AMD", "Advanced Micro Devices", "AMD", "NASDAQ", 168.22, 0.82, 274_000],
+      ["TSM", "Taiwan Semiconductor", "TSMC", "NYSE", 247.91, 1.38, 1_285_000],
+      ["ASML", "ASML Holding", "ASML", "NASDAQ", 1028.3, 0.44, 405_000],
+      ["QCOM", "Qualcomm Inc.", "\uD000\uCEF4", "NASDAQ", 183.18, -0.28, 204_000],
+      ["AMAT", "Applied Materials", "\uC5B4\uD50C\uB77C\uC774\uB4DC", "NASDAQ", 221.14, 0.67, 188_000],
+      ["LRCX", "Lam Research", "\uB7A8\uB9AC\uC11C\uCE58", "NASDAQ", 967.2, 0.58, 122_000],
+      ["MU", "Micron Technology", "\uB9C8\uC774\uD06C\uB860", "NASDAQ", 107.96, 1.45, 119_000],
+      ["ARM", "Arm Holdings", "\uC554", "NASDAQ", 142.63, 0.96, 132_000],
+    ],
+  },
+  {
+    id: "us-platform",
+    name: "Platform Giants",
+    nameKo: "\uD50C\uB7AB\uD3FC \uBE45\uD14C\uD06C",
+    region: "overseas" as const,
+    stocks: [
+      ["MSFT", "Microsoft", "\uB9C8\uC774\uD06C\uB85C\uC18C\uD504\uD2B8", "NASDAQ", 472.11, 0.72, 3_510_000],
+      ["AAPL", "Apple Inc.", "\uC560\uD50C", "NASDAQ", 203.41, -0.16, 3_125_000],
+      ["GOOGL", "Alphabet Class A", "\uC54C\uD30C\uBCB3", "NASDAQ", 182.34, 0.48, 2_245_000],
+      ["AMZN", "Amazon.com", "\uC544\uB9C8\uC874", "NASDAQ", 193.42, 0.56, 2_010_000],
+      ["META", "Meta Platforms", "\uBA54\uD0C0", "NASDAQ", 486.72, 1.04, 1_220_000],
+      ["NFLX", "Netflix", "\uB137\uD50C\uB9AD\uC2A4", "NASDAQ", 706.1, 0.31, 302_000],
+      ["ORCL", "Oracle", "\uC624\uB77C\uD074", "NYSE", 141.62, 0.22, 390_000],
+      ["CRM", "Salesforce", "\uC138\uC77C\uC988\uD3EC\uC2A4", "NYSE", 251.82, -0.51, 244_000],
+      ["ADBE", "Adobe", "\uC5B4\uB3C4\uBE44", "NASDAQ", 526.38, 0.39, 236_000],
+      ["NOW", "ServiceNow", "\uC11C\uBE44\uC2A4\uB098\uC6B0", "NYSE", 781.2, 0.77, 161_000],
+    ],
+  },
+  {
+    id: "k-semi",
+    name: "Korea Semiconductors",
+    nameKo: "\uAD6D\uB0B4 \uBC18\uB3C4\uCCB4",
+    region: "domestic" as const,
+    stocks: [
+      ["005930", "Samsung Electronics", "\uC0BC\uC131\uC804\uC790", "KOSPI", 73500, 0.68, 4_385_000],
+      ["000660", "SK Hynix", "SK\uD558\uC774\uB2C9\uC2A4", "KOSPI", 229300, 1.94, 1_670_000],
+      ["042700", "Hanmi Semiconductor", "\uD55C\uBBF8\uBC18\uB3C4\uCCB4", "KOSPI", 151200, 2.36, 95_000],
+      ["058470", "Leeno Industrial", "\uB9AC\uB178\uACF5\uC5C5", "KOSDAQ", 214500, 1.08, 62_000],
+      ["403870", "HPSP", "HPSP", "KOSDAQ", 38450, 0.83, 52_000],
+      ["039030", "EO Technics", "\uC774\uC624\uD14C\uD06C\uB2C9\uC2A4", "KOSDAQ", 183000, -0.42, 36_000],
+      ["240810", "Wonik IPS", "\uC6D0\uC775IPS", "KOSDAQ", 39750, 0.64, 31_000],
+      ["108320", "LX Semicon", "LX\uC138\uBBF8\uCF58", "KOSPI", 80300, -0.21, 27_000],
+      ["095340", "ISC", "ISC", "KOSDAQ", 74200, 0.91, 26_000],
+      ["036930", "Jusung Engineering", "\uC8FC\uC131\uC5D4\uC9C0\uB2C8\uC5B4\uB9C1", "KOSDAQ", 33550, 1.31, 24_000],
+    ],
+  },
+  {
+    id: "k-battery",
+    name: "Korea Batteries",
+    nameKo: "\uAD6D\uB0B4 2\uCC28\uC804\uC9C0",
+    region: "domestic" as const,
+    stocks: [
+      ["373220", "LG Energy Solution", "LG\uC5D0\uB108\uC9C0\uC194\uB8E8\uC158", "KOSPI", 356000, 0.54, 833_000],
+      ["006400", "Samsung SDI", "\uC0BC\uC131SDI", "KOSPI", 421000, 0.78, 289_000],
+      ["051910", "LG Chem", "LG\uD654\uD559", "KOSPI", 392500, -0.19, 277_000],
+      ["247540", "EcoPro BM", "\uC5D0\uCF54\uD504\uB85CBM", "KOSDAQ", 213500, 1.66, 228_000],
+      ["086520", "EcoPro", "\uC5D0\uCF54\uD504\uB85C", "KOSDAQ", 97200, 1.12, 129_000],
+      ["003670", "Posco Future M", "\uD3EC\uC2A4\uCF54\uD4E8\uCC98\uC5E0", "KOSPI", 257000, 0.47, 111_000],
+      ["066970", "L&F", "\uC5D8\uC564\uC5D0\uD504", "KOSDAQ", 143800, -0.36, 46_000],
+      ["278280", "Chunbo", "\uCC9C\uBCF4", "KOSDAQ", 89400, 0.28, 17_000],
+      ["005070", "Cosmo AM&T", "\uCF54\uC2A4\uBAA8\uC2E0\uC18C\uC7AC", "KOSPI", 125600, 0.71, 29_000],
+      ["096770", "SK Innovation", "SK\uC774\uB178\uBCA0\uC774\uC158", "KOSPI", 118400, -0.43, 109_000],
+    ],
+  },
+] as const;
 
 function formatClock(totalMinutes: number) {
   const hours = Math.floor(totalMinutes / 60);
@@ -282,21 +369,13 @@ function formatClock(totalMinutes: number) {
 
 function pointLabel(range: RangeKey, index: number, count: number) {
   if (range === "LIVE" || range === "1D") {
-    const start = 9 * 60 + 30;
-    const end = 16 * 60;
-    const totalMinutes = start + ((end - start) * index) / Math.max(count - 1, 1);
-
-    return formatClock(totalMinutes);
+    const start = 9 * 60;
+    const end = 15 * 60 + 30;
+    return formatClock(start + ((end - start) * index) / Math.max(count - 1, 1));
   }
 
   if (range === "1W") {
-    const days = ["Mon", "Tue", "Wed", "Thu", "Fri"];
-    const day = days[Math.min(days.length - 1, Math.floor((index / count) * days.length))];
-    const start = 9 * 60 + 30;
-    const end = 16 * 60;
-    const dayProgress = (index % Math.ceil(count / days.length)) / Math.ceil(count / days.length);
-
-    return `${day} ${formatClock(start + (end - start) * dayProgress)}`;
+    return ["Mon", "Tue", "Wed", "Thu", "Fri"][Math.min(4, Math.floor((index / count) * 5))];
   }
 
   if (range === "1M") {
@@ -314,224 +393,96 @@ function pointLabel(range: RangeKey, index: number, count: number) {
   return `P-${index + 1}`;
 }
 
-function interpolate(values: number[], ratio: number) {
-  const scaledIndex = ratio * (values.length - 1);
-  const leftIndex = Math.floor(scaledIndex);
-  const rightIndex = Math.min(values.length - 1, leftIndex + 1);
-  const localRatio = scaledIndex - leftIndex;
-
-  return values[leftIndex] + (values[rightIndex] - values[leftIndex]) * localRatio;
-}
-
-function baseValuesForRange(values: number[], range: RangeKey) {
-  const first = values[0];
-  const last = values[values.length - 1];
-  const direction = last >= first ? 1 : -1;
-  const spread = Math.max(Math.abs(last - first), Math.abs(last) * 0.012, 1);
-
-  if (range === "LIVE") {
-    return values;
-  }
-
-  const multipliers: Record<Exclude<RangeKey, "LIVE">, { start: number; step: number }> = {
-    "1D": { start: 0.08, step: 0 },
-    "1W": { start: -0.22, step: 0.055 },
-    "1M": { start: -0.72, step: 0.15 },
-    "1Y": { start: -1.85, step: 0.36 },
-    "5Y": { start: -4.6, step: 0.82 },
-    ALL: { start: -7.4, step: 1.22 },
-  };
-  const multiplier = multipliers[range];
-
-  return values.map(
-    (value, index) => value + direction * spread * multiplier.start + index * direction * spread * multiplier.step,
-  );
-}
-
-function buildChartPoints(values: number[], range: RangeKey): ChartPoint[] {
-  const count = rangePointCounts[range];
-  const first = values[0];
-  const last = values[values.length - 1];
-  const spread = Math.max(Math.abs(last - first), Math.abs(last) * 0.01, 1);
-
-  return Array.from({ length: count }, (_, index) => {
-    const ratio = index / Math.max(count - 1, 1);
-    const base = interpolate(values, ratio);
-    const wave =
-      index === 0 || index === count - 1
-        ? 0
-        : Math.sin(index * 0.92 + range.length) * spread * 0.11 +
-          Math.sin(index * 0.31) * spread * 0.07;
-    const close = base + wave;
-    const previousClose = index === 0 ? close - spread * 0.025 : interpolate(values, (index - 1) / count);
-    const open = index === 0 ? close - spread * 0.018 : previousClose + wave * 0.18;
-    const bodySpread = Math.abs(close - open);
-    const wickSpread = Math.max(Math.abs(close) * 0.0016, bodySpread * 0.58, spread * 0.035);
-    const high = Math.max(open, close) + wickSpread * (0.55 + (index % 4) * 0.12);
-    const low = Math.min(open, close) - wickSpread * (0.54 + (index % 3) * 0.11);
-
-    return {
-      label: pointLabel(range, index, count),
-      timestamp: undefined,
-      value: close,
-      open,
-      high,
-      low,
-      close,
-    };
-  });
-}
-
-function makeSeries(values: number[]): Record<RangeKey, ChartPoint[]> {
+function pointsForRange(range: RangeKey) {
   return {
-    LIVE: buildChartPoints(baseValuesForRange(values, "LIVE"), "LIVE"),
-    "1D": buildChartPoints(baseValuesForRange(values, "1D"), "1D"),
-    "1W": buildChartPoints(baseValuesForRange(values, "1W"), "1W"),
-    "1M": buildChartPoints(baseValuesForRange(values, "1M"), "1M"),
-    "1Y": buildChartPoints(baseValuesForRange(values, "1Y"), "1Y"),
-    "5Y": buildChartPoints(baseValuesForRange(values, "5Y"), "5Y"),
-    ALL: buildChartPoints(baseValuesForRange(values, "ALL"), "ALL"),
-  };
+    LIVE: 84,
+    "1D": 96,
+    "1W": 70,
+    "1M": 88,
+    "1Y": 96,
+    "5Y": 110,
+    ALL: 132,
+  }[range];
 }
 
-const fallbackStocks: Stock[] = [
-  {
-    symbol: "NVDA",
-    name: "NVIDIA Corp.",
-    localName: "\uC5D4\uBE44\uB514\uC544",
-    market: "NASDAQ",
-    region: "overseas",
-    currency: "USD",
-    price: 214.75,
-    change: -3.62,
-    changeAmount: -8.07,
-    sector: "Semiconductors",
-    sectorKo: "\uBC18\uB3C4\uCCB4",
-    signal: "Watch",
-    strategy: "Momentum",
-    series: makeSeries([222.82, 220.5, 218.1, 216.2, 215.8, 214.9, 214.75]),
-  },
-  {
-    symbol: "MU",
-    name: "Micron Technology Inc.",
-    localName: "\uB9C8\uC774\uD06C\uB860",
-    market: "NASDAQ",
-    region: "overseas",
-    currency: "USD",
-    price: 1079.57,
-    change: 1.45,
-    changeAmount: 15.47,
-    sector: "Memory Chips",
-    sectorKo: "\uBA54\uBAA8\uB9AC \uBC18\uB3C4\uCCB4",
-    signal: "Hold",
-    strategy: "Memory Cycle",
-    series: makeSeries([1064.1, 1068.2, 1071.4, 1077.6, 1082.8, 1075.4, 1079.57]),
-  },
-  {
-    symbol: "SNDK",
-    name: "Sandisk Corp.",
-    localName: "\uC0CC\uB514\uC2A4\uD06C",
-    market: "NASDAQ",
-    region: "overseas",
-    currency: "USD",
-    price: 1831.5,
-    change: 6.71,
-    changeAmount: 115.14,
-    sector: "Storage",
-    sectorKo: "\uC2A4\uD1A0\uB9AC\uC9C0",
-    signal: "Buy",
-    strategy: "NAND Supply",
-    series: makeSeries([1716.36, 1744.8, 1761.2, 1805.4, 1842.6, 1824.2, 1831.5]),
-  },
-  {
-    symbol: "005930",
-    name: "Samsung Electronics",
-    localName: "\uC0BC\uC131\uC804\uC790",
-    market: "KOSPI",
-    region: "domestic",
-    currency: "KRW",
-    price: 355500,
-    change: -1.39,
-    changeAmount: -5000,
-    sector: "Semiconductors",
-    sectorKo: "\uBC18\uB3C4\uCCB4",
-    signal: "Watch",
-    strategy: "Cycle Recovery",
-    series: makeSeries([360500, 349000, 348000, 356000, 366000, 360000, 355500]),
-  },
-  {
-    symbol: "000660",
-    name: "SK Hynix",
-    localName: "SK\uD558\uC774\uB2C9\uC2A4",
-    market: "KOSPI",
-    region: "domestic",
-    currency: "KRW",
-    price: 2293000,
-    change: -2.84,
-    changeAmount: -67000,
-    sector: "Memory Chips",
-    sectorKo: "\uBA54\uBAA8\uB9AC \uBC18\uB3C4\uCCB4",
-    signal: "Watch",
-    strategy: "Momentum",
-    series: makeSeries([2360000, 2284000, 2262000, 2295000, 2327000, 2310000, 2293000]),
-  },
-];
+function buildSeries(price: number, change: number, seed: number): Record<RangeKey, ChartPoint[]> {
+  return Object.fromEntries(
+    ranges.map((range) => {
+      const count = pointsForRange(range);
+      const rangeBias = { LIVE: 0.18, "1D": 0.5, "1W": 1.4, "1M": 2.8, "1Y": 8.2, "5Y": 24, ALL: 38 }[
+        range
+      ];
+      const start = price / (1 + (change * rangeBias) / 100);
+      const spread = Math.max(price * 0.006, Math.abs(price - start) * 0.36, 1);
+      const points = Array.from({ length: count }, (_, index) => {
+        const ratio = index / Math.max(count - 1, 1);
+        const trend = start + (price - start) * ratio;
+        const cycle = Math.sin(index * 0.34 + seed) * spread + Math.sin(index * 0.09 + seed * 0.7) * spread * 0.55;
+        const close = index === count - 1 ? price : Math.max(1, trend + cycle);
+        const open = index === 0 ? close - spread * 0.16 : Math.max(1, trend - cycle * 0.22);
+        const wick = Math.max(Math.abs(close - open) * 0.62, spread * 0.42);
 
-const initialWatchlist = ["NVDA", "MU", "SNDK", "005930", "000660"];
-const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+        return {
+          label: pointLabel(range, index, count),
+          value: close,
+          open,
+          high: Math.max(open, close) + wick,
+          low: Math.max(0.01, Math.min(open, close) - wick),
+          close,
+          volume: Math.round(250000 + Math.abs(Math.sin(index + seed)) * 2200000),
+        };
+      });
 
-function stockSignal(change: number): Stock["signal"] {
-  if (change >= 2) {
+      return [range, points];
+    }),
+  ) as Record<RangeKey, ChartPoint[]>;
+}
+
+function buildUniverse(): ThemeUniverse[] {
+  return themeSeed.map((theme) => ({
+    ...theme,
+    stocks: theme.stocks.map((row, index) => {
+      const [symbol, name, localName, market, price, change, marketCap] = row;
+      const currency = theme.region === "domestic" ? "KRW" : "USD";
+      const numericPrice = Number(price);
+      const numericChange = Number(change);
+
+      return {
+        symbol: String(symbol),
+        name: String(name),
+        localName: String(localName),
+        market: String(market),
+        region: theme.region,
+        currency,
+        price: numericPrice,
+        change: numericChange,
+        changeAmount: numericPrice * (numericChange / 100),
+        open: numericPrice / (1 + numericChange / 100),
+        high: numericPrice * 1.012,
+        low: numericPrice * 0.988,
+        volume: 900000 + index * 117000,
+        sector: theme.name,
+        sectorKo: theme.nameKo,
+        marketCap: Number(marketCap),
+        rank: index + 1,
+        signal: numericChange >= 1 ? "Buy" : numericChange < 0 ? "Watch" : "Hold",
+        strategy: index < 3 ? "Theme rotation TOP3" : "Theme watchlist TOP10",
+        series: buildSeries(numericPrice, numericChange, index + theme.id.length),
+      };
+    }),
+  }));
+}
+
+function stockSignal(change: number): Signal {
+  if (change >= 1) {
     return "Buy";
   }
 
-  if (change <= -1) {
+  if (change < 0) {
     return "Watch";
   }
 
   return "Hold";
-}
-
-function buildLiveSeries(quote: KisQuote) {
-  const previousClose = quote.price - quote.change_amount;
-  const open = quote.open ?? previousClose;
-  const high = quote.high ?? Math.max(previousClose, quote.price) * 1.006;
-  const low = quote.low ?? Math.min(previousClose, quote.price) * 0.994;
-
-  return makeSeries([
-    previousClose,
-    open,
-    low,
-    (open + quote.price) / 2,
-    high,
-    quote.price - quote.change_amount * 0.18,
-    quote.price,
-  ]);
-}
-
-function stockFromKisQuote(quote: KisQuote): Stock {
-  return {
-    symbol: quote.symbol,
-    name: quote.name,
-    localName: quote.local_name,
-    market: quote.market,
-    region: quote.region,
-    currency: quote.currency,
-    price: quote.price,
-    change: quote.change,
-    changeAmount: quote.change_amount,
-    open: quote.open,
-    high: quote.high,
-    low: quote.low,
-    volume: quote.volume,
-    fetchedAt: quote.fetched_at,
-    source: quote.source,
-    sector: quote.sector,
-    sectorKo: quote.sector_ko,
-    signal: stockSignal(quote.change),
-    strategy: "KIS Quote Sync",
-    series: buildLiveSeries(quote),
-  };
 }
 
 function pointFromHistoryCandle(candle: KisHistoryCandle): ChartPoint {
@@ -543,6 +494,7 @@ function pointFromHistoryCandle(candle: KisHistoryCandle): ChartPoint {
     high: candle.high,
     low: candle.low,
     close: candle.close,
+    volume: candle.volume ?? 0,
   };
 }
 
@@ -560,33 +512,54 @@ function formatChartPointLabel(point: ChartPoint, range: RangeKey, language: Lan
   const locale = language === "ko" ? "ko-KR" : "en-US";
 
   if (range === "LIVE" || range === "1D") {
-    return new Intl.DateTimeFormat(locale, {
-      hour: "2-digit",
-      minute: "2-digit",
-    }).format(date);
+    return new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit" }).format(date);
   }
 
-  if (range === "5Y" || range === "ALL") {
-    return new Intl.DateTimeFormat(locale, {
-      year: "2-digit",
-      month: "short",
-    }).format(date);
-  }
-
-  return new Intl.DateTimeFormat(locale, {
-    month: "short",
-    day: "2-digit",
-  }).format(date);
+  return new Intl.DateTimeFormat(locale, { month: "short", day: "2-digit" }).format(date);
 }
 
-function formatCompactNumber(value: number | null | undefined, language: Language) {
+function stockName(stock: Stock, language: Language) {
+  return language === "ko" ? stock.localName : stock.name;
+}
+
+function sectorName(stock: Stock, language: Language) {
+  return language === "ko" ? stock.sectorKo : stock.sector;
+}
+
+function themeName(theme: ThemeUniverse, language: Language) {
+  return language === "ko" ? theme.nameKo : theme.name;
+}
+
+function signalLabel(signal: Signal, language: Language) {
+  if (language === "en") {
+    return signal;
+  }
+
+  return { Buy: "\uB9E4\uC218", Watch: "\uAD00\uCC30", Hold: "\uBCF4\uC720" }[signal];
+}
+
+function formatMoney(value: number, currency: "KRW" | "USD" = "KRW") {
+  if (currency === "USD") {
+    return `$${value.toLocaleString("en-US", { maximumFractionDigits: 2, minimumFractionDigits: 2 })}`;
+  }
+
+  return `${Math.round(value).toLocaleString("ko-KR")}\uC6D0`;
+}
+
+function formatPrice(stock: Stock) {
+  return stock.currency === "KRW" ? formatMoney(stock.price) : formatMoney(stock.price, "USD");
+}
+
+function priceToKrw(stock: Stock) {
+  return stock.currency === "KRW" ? stock.price : stock.price * usdKrw;
+}
+
+function formatCompactNumber(value: number | null | undefined) {
   if (!value) {
     return "-";
   }
 
-  return value.toLocaleString(language === "ko" ? "ko-KR" : "en-US", {
-    maximumFractionDigits: 0,
-  });
+  return value.toLocaleString("ko-KR", { maximumFractionDigits: 0 });
 }
 
 function formatFetchedAt(value: string | undefined, language: Language) {
@@ -601,138 +574,162 @@ function formatFetchedAt(value: string | undefined, language: Language) {
   }).format(new Date(value));
 }
 
-function stockName(stock: Stock, language: Language) {
-  return language === "ko" ? stock.localName : stock.name;
+function movingAverage(points: ChartPoint[], windowSize: number) {
+  const slice = points.slice(-windowSize);
+  return slice.reduce((sum, point) => sum + point.close, 0) / Math.max(slice.length, 1);
 }
 
-function sectorName(stock: Stock, language: Language) {
-  return language === "ko" ? stock.sectorKo : stock.sector;
+function momentumScore(stock: Stock) {
+  const points = stock.series.LIVE;
+  const fast = movingAverage(points, 8);
+  const slow = movingAverage(points, 26);
+
+  return ((fast - slow) / slow) * 100 + stock.change * 0.25;
 }
 
-function signalLabel(signal: Stock["signal"], language: Language) {
-  if (language === "en") {
-    return signal;
-  }
-
-  return {
-    Buy: "\uB9E4\uC218",
-    Watch: "\uAD00\uCC30",
-    Hold: "\uBCF4\uC720",
-  }[signal];
+function themeMomentum(theme: ThemeUniverse) {
+  return theme.stocks.slice(0, 10).reduce((sum, stock) => sum + momentumScore(stock), 0) / 10;
 }
 
-function formatPrice(stock: Stock) {
-  if (stock.currency === "KRW") {
-    return `${stock.price.toLocaleString("ko-KR")} KRW`;
-  }
+function isMovingAverageRollingOver(theme: ThemeUniverse) {
+  const lastThree = theme.stocks.slice(0, 10).map((stock) => {
+    const points = stock.series.LIVE;
+    const current = movingAverage(points, 8);
+    const previous = movingAverage(points.slice(0, -4), 8);
 
-  return `$${stock.price.toLocaleString("en-US", {
-    maximumFractionDigits: 2,
-    minimumFractionDigits: 2,
-  })}`;
+    return current < previous;
+  });
+
+  return lastThree.filter(Boolean).length >= 6;
 }
 
-function xFor(index: number, count: number, width: number, padding: number) {
-  return padding + (index / Math.max(count - 1, 1)) * (width - padding * 2);
+function xFor(index: number, count: number, width: number, paddingLeft: number, paddingRight: number) {
+  return paddingLeft + (index / Math.max(count - 1, 1)) * (width - paddingLeft - paddingRight);
 }
 
-function buildPath(
-  points: ChartPoint[],
-  width: number,
-  height: number,
-  padding: number,
-  min: number,
-  max: number,
-) {
+function yFor(value: number, min: number, max: number, height: number, paddingTop: number, paddingBottom: number) {
   const spread = max - min || 1;
+  return paddingTop + ((max - value) / spread) * (height - paddingTop - paddingBottom);
+}
 
+function buildPath(points: ChartPoint[], width: number, height: number, min: number, max: number) {
   return points
     .map((point, index) => {
-      const x = xFor(index, points.length, width, padding);
-      const y = padding + ((max - point.value) / spread) * (height - padding * 2);
-
+      const x = xFor(index, points.length, width, 60, 26);
+      const y = yFor(point.value, min, max, height, 20, 52);
       return `${index === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
     })
     .join(" ");
 }
 
-function pointFor(
-  points: ChartPoint[],
-  index: number,
-  width: number,
-  height: number,
-  padding: number,
-  min: number,
-  max: number,
-) {
-  const spread = max - min || 1;
-  const x = xFor(index, points.length, width, padding);
-  const y = padding + ((max - points[index].value) / spread) * (height - padding * 2);
-
-  return { x, y };
-}
-
-function buildCandles(points: ChartPoint[]): Candle[] {
-  return points.map((point) => {
-    return {
-      label: point.label,
-      open: point.open,
-      high: point.high,
-      low: point.low,
-      close: point.close,
-    };
-  });
-}
-
-function yFor(value: number, min: number, max: number, height: number, padding: number) {
-  const spread = max - min || 1;
-
-  return padding + ((max - value) / spread) * (height - padding * 2);
-}
-
 function axisTickIndexes(count: number) {
   const tickCount = 6;
   const step = Math.max(1, Math.floor((count - 1) / (tickCount - 1)));
-  const indexes = Array.from({ length: tickCount }, (_, index) =>
-    Math.min(count - 1, index * step),
-  );
-
-  return [...new Set([...indexes, count - 1])];
+  return [...new Set(Array.from({ length: tickCount }, (_, index) => Math.min(count - 1, index * step)).concat(count - 1))];
 }
 
-function formatAxisPrice(value: number, currency: Stock["currency"]) {
-  if (currency === "KRW") {
-    return Math.round(value).toLocaleString("ko-KR");
+function mergeLiveQuotes(universes: ThemeUniverse[], quotes: KisQuote[]) {
+  if (!quotes.length) {
+    return universes;
   }
 
-  return value.toLocaleString("en-US", {
-    maximumFractionDigits: 2,
-    minimumFractionDigits: 2,
-  });
+  const quoteMap = new Map(quotes.map((quote) => [quote.symbol, quote]));
+
+  return universes.map((theme) => ({
+    ...theme,
+    stocks: theme.stocks.map((stock) => {
+      const quote = quoteMap.get(stock.symbol);
+
+      if (!quote) {
+        return stock;
+      }
+
+      return {
+        ...stock,
+        name: quote.name,
+        localName: quote.local_name,
+        market: quote.market,
+        price: quote.price,
+        change: quote.change,
+        changeAmount: quote.change_amount,
+        open: quote.open,
+        high: quote.high,
+        low: quote.low,
+        volume: quote.volume,
+        fetchedAt: quote.fetched_at,
+        source: quote.source,
+        signal: stockSignal(quote.change),
+        strategy: "KIS quote + theme rotation",
+        series: buildSeries(quote.price, quote.change, stock.rank + theme.id.length),
+      };
+    }),
+  }));
+}
+
+function tickUniverses(universes: ThemeUniverse[], tick: number) {
+  return universes.map((theme, themeIndex) => ({
+    ...theme,
+    stocks: theme.stocks.map((stock, stockIndex) => {
+      const drift = Math.sin((tick + stockIndex * 11 + themeIndex * 17) / 17) * 0.0008 + momentumScore(stock) * 0.000025;
+      const nextPrice = Math.max(1, stock.price * (1 + drift));
+      const previousClose = stock.series.LIVE.at(-1)?.close ?? stock.price;
+      const nextPoint: ChartPoint = {
+        label: formatClock(9 * 60 + ((tick + stockIndex * 3) % 390)),
+        value: nextPrice,
+        open: previousClose,
+        high: Math.max(previousClose, nextPrice) * 1.0014,
+        low: Math.min(previousClose, nextPrice) * 0.9986,
+        close: nextPrice,
+        volume: Math.round((stock.volume ?? 400000) * (0.7 + Math.abs(Math.sin(tick / 9 + stockIndex)))),
+      };
+      const live = [...stock.series.LIVE.slice(-83), nextPoint];
+      const change = ((nextPrice - (stock.open || nextPrice)) / (stock.open || nextPrice)) * 100;
+
+      return {
+        ...stock,
+        price: nextPrice,
+        change,
+        changeAmount: nextPrice - (stock.open || nextPrice),
+        high: Math.max(stock.high ?? nextPrice, nextPrice),
+        low: Math.min(stock.low ?? nextPrice, nextPrice),
+        signal: stockSignal(change),
+        series: { ...stock.series, LIVE: live, "1D": [...stock.series["1D"].slice(-95), nextPoint] },
+      };
+    }),
+  }));
 }
 
 export default function StockDashboard() {
   const [query, setQuery] = useState("");
-  const [marketScope, setMarketScope] = useState<MarketScope>("overseas");
+  const [marketScope, setMarketScope] = useState<MarketScope>("domestic");
   const [language, setLanguage] = useState<Language>("ko");
-  const [selectedSymbol, setSelectedSymbol] = useState("NVDA");
-  const [watchlist, setWatchlist] = useState(initialWatchlist);
+  const [selectedSymbol, setSelectedSymbol] = useState("005930");
+  const [watchlist, setWatchlist] = useState(["005930", "000660", "373220", "NVDA", "MSFT"]);
   const [range, setRange] = useState<RangeKey>("LIVE");
   const [chartType, setChartType] = useState<ChartType>("candle");
   const [activePoint, setActivePoint] = useState<number | null>(null);
-  const [liveStocks, setLiveStocks] = useState<Stock[]>([]);
-  const [chartHistory, setChartHistory] = useState<
-    Record<string, Partial<Record<RangeKey, ChartPoint[]>>>
-  >({});
+  const [universes, setUniverses] = useState<ThemeUniverse[]>(() => buildUniverse());
+  const [chartHistory, setChartHistory] = useState<Record<string, Partial<Record<RangeKey, ChartPoint[]>>>>({});
   const [dataStatus, setDataStatus] = useState<DataStatus>("idle");
   const [dataError, setDataError] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
+  const [autoRun, setAutoRun] = useState(true);
+  const [cash, setCash] = useState(initialCash);
+  const [positions, setPositions] = useState<Position[]>([]);
+  const [tradeLog, setTradeLog] = useState<string[]>(["Ready: 10,000,000 KRW paper account"]);
+  const [tick, setTick] = useState(0);
 
   const t = copy[language];
-  const stocks = liveStocks.length ? liveStocks : fallbackStocks;
+  const stocks = useMemo(() => universes.flatMap((theme) => theme.stocks), [universes]);
+  const marketThemes = useMemo(() => universes.filter((theme) => theme.region === marketScope), [marketScope, universes]);
+  const activeTheme = useMemo(
+    () => [...marketThemes].sort((a, b) => themeMomentum(b) - themeMomentum(a))[0],
+    [marketThemes],
+  );
+  const targetStocks = useMemo(() => activeTheme?.stocks.slice(0, 3) ?? [], [activeTheme]);
   const marketStocks = useMemo(
-    () => stocks.filter((stock) => stock.region === marketScope),
-    [marketScope, stocks],
+    () => marketThemes.flatMap((theme) => theme.stocks).sort((a, b) => b.marketCap - a.marketCap),
+    [marketThemes],
   );
   const filteredStocks = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -742,11 +739,28 @@ export default function StockDashboard() {
     }
 
     return marketStocks.filter((stock) =>
-      [stock.symbol, stock.name, stock.localName, stock.market, stock.sector, stock.sectorKo].some(
-        (value) => value.toLowerCase().includes(normalizedQuery),
+      [stock.symbol, stock.name, stock.localName, stock.market, stock.sector, stock.sectorKo].some((value) =>
+        value.toLowerCase().includes(normalizedQuery),
       ),
     );
   }, [marketStocks, query]);
+  const selectedStock =
+    stocks.find((stock) => stock.symbol === selectedSymbol && stock.region === marketScope) ??
+    marketStocks[0] ??
+    stocks[0];
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setTick((currentTick) => {
+        const nextTick = currentTick + 1;
+        setUniverses((currentUniverses) => tickUniverses(currentUniverses, nextTick));
+
+        return nextTick;
+      });
+    }, 1000);
+
+    return () => window.clearInterval(intervalId);
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -756,9 +770,7 @@ export default function StockDashboard() {
       setDataError("");
 
       try {
-        const response = await fetch(`${apiBaseUrl}/quotes/kis/watchlist`, {
-          signal: controller.signal,
-        });
+        const response = await fetch(`${apiBaseUrl}/quotes/kis/watchlist`, { signal: controller.signal });
 
         if (!response.ok) {
           const payload = (await response.json().catch(() => null)) as { detail?: string } | null;
@@ -766,16 +778,9 @@ export default function StockDashboard() {
         }
 
         const payload = (await response.json()) as KisWatchlistResponse;
-        const nextStocks = payload.data.map(stockFromKisQuote);
-
-        if (nextStocks.length) {
-          setLiveStocks(nextStocks);
-          setDataStatus(payload.errors.length ? "error" : "ready");
-          setDataError(payload.errors.join(" / "));
-        } else {
-          setDataStatus("error");
-          setDataError(payload.errors.join(" / ") || "No KIS quote data returned.");
-        }
+        setUniverses((currentUniverses) => mergeLiveQuotes(currentUniverses, payload.data));
+        setDataStatus(payload.errors.length ? "error" : "ready");
+        setDataError(payload.errors.join(" / "));
       } catch (error) {
         if (controller.signal.aborted) {
           return;
@@ -787,7 +792,7 @@ export default function StockDashboard() {
     }
 
     loadQuotes();
-    const intervalId = window.setInterval(loadQuotes, 10000);
+    const intervalId = window.setInterval(loadQuotes, 1000);
 
     return () => {
       controller.abort();
@@ -795,19 +800,18 @@ export default function StockDashboard() {
     };
   }, [refreshKey]);
 
-  const selectedStock =
-    stocks.find((stock) => stock.symbol === selectedSymbol && stock.region === marketScope) ??
-    marketStocks[0];
-
   useEffect(() => {
+    if (!selectedStock) {
+      return;
+    }
+
     const controller = new AbortController();
 
     async function loadChartHistory() {
       try {
-        const response = await fetch(
-          `${apiBaseUrl}/quotes/kis/history/${selectedStock.symbol}?range=${range}`,
-          { signal: controller.signal },
-        );
+        const response = await fetch(`${apiBaseUrl}/quotes/kis/history/${selectedStock.symbol}?range=${range}`, {
+          signal: controller.signal,
+        });
 
         if (!response.ok) {
           return;
@@ -820,107 +824,143 @@ export default function StockDashboard() {
           return;
         }
 
-        setChartHistory((currentHistory) => {
-          const historyKey = `${selectedStock.symbol}:${selectedStock.region}`;
-
-          return {
-            ...currentHistory,
-            [historyKey]: {
-              ...currentHistory[historyKey],
-              [range]: points,
-            },
-          };
-        });
+        setChartHistory((currentHistory) => ({
+          ...currentHistory,
+          [selectedStock.symbol]: {
+            ...currentHistory[selectedStock.symbol],
+            [range]: points,
+          },
+        }));
       } catch {
-        if (controller.signal.aborted) {
-          return;
-        }
+        return;
       }
     }
 
     loadChartHistory();
-
-    const intervalId =
-      range === "LIVE" || range === "1D" ? window.setInterval(loadChartHistory, 10000) : null;
+    const intervalId = range === "LIVE" || range === "1D" ? window.setInterval(loadChartHistory, 1000) : null;
 
     return () => {
       controller.abort();
-
       if (intervalId) {
         window.clearInterval(intervalId);
       }
     };
-  }, [range, selectedStock.region, selectedStock.symbol]);
+  }, [range, selectedStock]);
 
-  const chartHistoryKey = `${selectedStock.symbol}:${selectedStock.region}`;
-  const selectedHistoryPoints = chartHistory[chartHistoryKey]?.[range];
-  const selectedPoints = selectedHistoryPoints?.length
-    ? selectedHistoryPoints
-    : selectedStock.series[range];
+  useEffect(() => {
+    if (!autoRun || !activeTheme || !targetStocks.length) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      const portfolioValue = positions.reduce((sum, position) => {
+        const stock = stocks.find((item) => item.symbol === position.symbol);
+        return sum + (stock ? position.shares * priceToKrw(stock) : 0);
+      }, cash);
+      const lossTriggered = positions.some((position) => {
+        const stock = stocks.find((item) => item.symbol === position.symbol);
+        return stock ? priceToKrw(stock) <= position.entryPrice * 0.98 : false;
+      });
+      const shouldExit = lossTriggered || isMovingAverageRollingOver(activeTheme) || tick % 390 >= 385;
+      const currentSymbols = positions.map((position) => position.symbol).sort().join(",");
+      const targetSymbols = targetStocks.map((stock) => stock.symbol).sort().join(",");
+
+      if (positions.length && (shouldExit || currentSymbols !== targetSymbols)) {
+        setCash(portfolioValue);
+        setPositions([]);
+        setTradeLog((log) => [
+          `${new Date().toLocaleTimeString("ko-KR")} SELL ${shouldExit ? "risk/exit" : "rotation"} ${formatMoney(portfolioValue)}`,
+          ...log.slice(0, 5),
+        ]);
+        return;
+      }
+
+      if (!positions.length && cash > 1000) {
+        const allocation = cash / targetStocks.length;
+        const nextPositions = targetStocks.map((stock) => {
+          const entryPrice = priceToKrw(stock);
+
+          return {
+            symbol: stock.symbol,
+            shares: allocation / entryPrice,
+            entryPrice,
+            entryValue: allocation,
+          };
+        });
+
+        setCash(0);
+        setPositions(nextPositions);
+        setTradeLog((log) => [
+          `${new Date().toLocaleTimeString("ko-KR")} BUY ${themeName(activeTheme, language)} TOP3`,
+          ...log.slice(0, 5),
+        ]);
+      }
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [activeTheme, autoRun, cash, language, positions, stocks, targetStocks, tick]);
+
+  const selectedHistoryPoints = chartHistory[selectedStock.symbol]?.[range];
+  const selectedPoints = selectedHistoryPoints?.length ? selectedHistoryPoints : selectedStock.series[range];
   const selectedValues = selectedPoints.map((point) => point.value);
-  const selectedCandles = buildCandles(selectedPoints);
   const selectedIndex = Math.min(activePoint ?? selectedPoints.length - 1, selectedPoints.length - 1);
   const selectedPoint = selectedPoints[selectedIndex];
-  const selectedPointValue = selectedPoint.value;
   const rangeStart = selectedValues[0];
   const rangeEnd = selectedValues[selectedValues.length - 1];
   const rangeMove = ((rangeEnd - rangeStart) / rangeStart) * 100;
-  const rangeHigh = Math.max(...selectedValues);
-  const rangeLow = Math.min(...selectedValues);
-  const chartWidth = 820;
-  const chartHeight = 340;
-  const chartPadding = 28;
-  const candleExtremes = selectedCandles.flatMap((candle) => [candle.high, candle.low]);
+  const chartWidth = 900;
+  const chartHeight = 420;
+  const candleExtremes = selectedPoints.flatMap((point) => [point.high, point.low]);
   const rawChartMin = Math.min(...selectedValues, ...candleExtremes);
   const rawChartMax = Math.max(...selectedValues, ...candleExtremes);
   const chartSpread = rawChartMax - rawChartMin || Math.abs(rangeEnd) * 0.01 || 1;
-  const chartMin = rawChartMin - chartSpread * 0.1;
+  const chartMin = rawChartMin - chartSpread * 0.12;
   const chartMax = rawChartMax + chartSpread * 0.1;
-  const path = buildPath(selectedPoints, chartWidth, chartHeight, chartPadding, chartMin, chartMax);
+  const path = buildPath(selectedPoints, chartWidth, chartHeight, chartMin, chartMax);
   const xAxisIndexes = axisTickIndexes(selectedPoints.length);
-  const yAxisTicks = [0, 1, 2, 3].map(
-    (tick) => chartMax - ((chartMax - chartMin) * tick) / 3,
-  );
-  const candleWidth = Math.max(
-    3,
-    Math.min(9, ((chartWidth - chartPadding * 2) / selectedCandles.length) * 0.48),
-  );
-  const activeCoordinates = pointFor(
-    selectedPoints,
-    selectedIndex,
-    chartWidth,
-    chartHeight,
-    chartPadding,
-    chartMin,
-    chartMax,
-  );
+  const yAxisTicks = [0, 1, 2, 3, 4].map((item) => chartMax - ((chartMax - chartMin) * item) / 4);
+  const candleWidth = Math.max(3, Math.min(10, ((chartWidth - 86) / selectedPoints.length) * 0.55));
+  const activeX = xFor(selectedIndex, selectedPoints.length, chartWidth, 60, 26);
+  const activeY = yFor(selectedPoint.value, chartMin, chartMax, chartHeight, 20, 52);
+  const volumeMax = Math.max(...selectedPoints.map((point) => point.volume || 1));
   const watchedStocks = watchlist
     .map((symbol) => stocks.find((stock) => stock.symbol === symbol))
     .filter((stock): stock is Stock => Boolean(stock))
     .filter((stock) => stock.region === marketScope);
-  const isWatched = watchlist.includes(selectedStock.symbol);
   const latestFetchedAt = stocks.find((stock) => stock.fetchedAt)?.fetchedAt;
+  const accountValue = positions.reduce((sum, position) => {
+    const stock = stocks.find((item) => item.symbol === position.symbol);
+    return sum + (stock ? position.shares * priceToKrw(stock) : 0);
+  }, cash);
+  const pnl = accountValue - initialCash;
+  const pnlRate = (pnl / initialCash) * 100;
   const dataModeLabel =
     dataStatus === "loading"
       ? t.loadingQuotes
       : dataStatus === "error"
         ? t.quoteError
-        : liveStocks.length
+        : stocks.some((stock) => stock.source)
           ? t.liveDataMode
           : t.dataMode;
   const marketFeed = [
     {
       label: "KIS",
-      value: liveStocks.length ? `${liveStocks.length} synced` : "sample fallback",
+      value: stocks.some((stock) => stock.source) ? "1s synced" : "1s simulated",
       change: dataStatus === "error" ? "ERR" : "LIVE",
       positive: dataStatus !== "error",
     },
-    ...stocks.slice(0, 2).map((stock) => ({
-      label: stock.symbol,
-      value: formatPrice(stock),
-      change: `${stock.change > 0 ? "+" : ""}${stock.change.toFixed(2)}%`,
-      positive: stock.change >= 0,
-    })),
+    {
+      label: activeTheme ? themeName(activeTheme, language) : "-",
+      value: `${(activeTheme ? themeMomentum(activeTheme) : 0).toFixed(2)} MA`,
+      change: t.activeTheme,
+      positive: true,
+    },
+    {
+      label: t.accountValue,
+      value: formatMoney(accountValue),
+      change: `${pnl >= 0 ? "+" : ""}${pnlRate.toFixed(2)}%`,
+      positive: pnl >= 0,
+    },
   ];
   const navItems = [
     { label: t.home, icon: Home },
@@ -931,11 +971,6 @@ export default function StockDashboard() {
     { label: t.reports, icon: FileText },
     { label: t.settings, icon: Settings },
   ];
-
-  function selectStock(symbol: string) {
-    setSelectedSymbol(symbol);
-    setActivePoint(null);
-  }
 
   function selectMarket(nextScope: MarketScope) {
     const firstStock = stocks.find((stock) => stock.region === nextScope);
@@ -954,13 +989,17 @@ export default function StockDashboard() {
     );
   }
 
+  function resetSimulation() {
+    setCash(initialCash);
+    setPositions([]);
+    setTradeLog(["Reset: 10,000,000 KRW paper account"]);
+  }
+
   function handleChartPointerMove(event: React.PointerEvent<SVGSVGElement>) {
     const rect = event.currentTarget.getBoundingClientRect();
     const relativeX = event.clientX - rect.left;
     const ratio = Math.min(Math.max(relativeX / rect.width, 0), 1);
-    const nextIndex = Math.round(ratio * (selectedValues.length - 1));
-
-    setActivePoint(nextIndex);
+    setActivePoint(Math.round(ratio * (selectedPoints.length - 1)));
   }
 
   return (
@@ -978,11 +1017,7 @@ export default function StockDashboard() {
             const Icon = item.icon;
 
             return (
-              <button
-                className={index === 0 ? styles.navItemActive : styles.navItem}
-                key={item.label}
-                type="button"
-              >
+              <button className={index === 0 ? styles.navItemActive : styles.navItem} key={item.label} type="button">
                 <Icon size={18} />
                 {item.label}
               </button>
@@ -995,7 +1030,7 @@ export default function StockDashboard() {
           <small>{t.connected}</small>
           <div>
             <span>{t.buyingPower}</span>
-            <strong>{marketScope === "domestic" ? "12,450,000 KRW" : "$42,880"}</strong>
+            <strong>{formatMoney(cash)}</strong>
           </div>
           <div>
             <span>{t.executionMode}</span>
@@ -1007,7 +1042,7 @@ export default function StockDashboard() {
       <section className={styles.mainStage}>
         <header className={styles.topbar}>
           <div>
-            <span className={styles.productName}>MCBot</span>
+            <span className={styles.productName}>{t.autoTrading}</span>
             <h1>{t.appName}</h1>
           </div>
           <div className={styles.marketTicker} aria-label="Market overview">
@@ -1015,19 +1050,14 @@ export default function StockDashboard() {
               <div key={feed.label}>
                 <span>{feed.label}</span>
                 <strong>{feed.value}</strong>
-                <small className={feed.positive ? styles.positive : styles.negative}>
-                  {feed.change}
-                </small>
+                <small className={feed.positive ? styles.positive : styles.negative}>{feed.change}</small>
               </div>
             ))}
           </div>
           <div className={styles.headerActions}>
             <label className={styles.languageSelect}>
               <span>{t.language}</span>
-              <select
-                value={language}
-                onChange={(event) => setLanguage(event.target.value as Language)}
-              >
+              <select value={language} onChange={(event) => setLanguage(event.target.value as Language)}>
                 <option value="en">English</option>
                 <option value="ko">{"\uD55C\uAD6D\uC5B4"}</option>
               </select>
@@ -1059,11 +1089,7 @@ export default function StockDashboard() {
             <span className={styles.visuallyHidden} id="search-title">
               {t.searchTitle}
             </span>
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder={t.searchPlaceholder}
-            />
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t.searchPlaceholder} />
             {query ? (
               <button type="button" onClick={() => setQuery("")} aria-label="Clear search">
                 <X size={16} />
@@ -1100,7 +1126,7 @@ export default function StockDashboard() {
             </div>
             {dataStatus === "error" && dataError ? (
               <div className={styles.dataAlert}>
-                <AlertCircle size={16} />
+                <Activity size={16} />
                 <span>{dataError}</span>
               </div>
             ) : null}
@@ -1108,21 +1134,28 @@ export default function StockDashboard() {
               {filteredStocks.length ? (
                 filteredStocks.map((stock) => (
                   <button
-                    className={`${styles.stockRow} ${
-                      stock.symbol === selectedStock.symbol ? styles.stockRowSelected : ""
-                    }`}
+                    className={`${styles.stockRow} ${stock.symbol === selectedStock.symbol ? styles.stockRowSelected : ""}`}
                     key={stock.symbol}
                     type="button"
-                    onClick={() => selectStock(stock.symbol)}
+                    onClick={() => {
+                      setSelectedSymbol(stock.symbol);
+                      setActivePoint(null);
+                    }}
                   >
                     <span>
-                      <strong>{stock.symbol}</strong>
+                      <strong>
+                        {stock.symbol}
+                        <em>#{stock.rank}</em>
+                      </strong>
                       <small>{stockName(stock, language)}</small>
                     </span>
-                    <span className={stock.change >= 0 ? styles.positive : styles.negative}>
-                      {stock.change >= 0 ? <TrendingUp size={15} /> : <TrendingDown size={15} />}
-                      {stock.change > 0 ? "+" : ""}
-                      {stock.change.toFixed(2)}%
+                    <span>
+                      <b>{formatPrice(stock)}</b>
+                      <small className={stock.change >= 0 ? styles.positive : styles.negative}>
+                        {stock.change >= 0 ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
+                        {stock.change > 0 ? "+" : ""}
+                        {stock.change.toFixed(2)}%
+                      </small>
                     </span>
                   </button>
                 ))
@@ -1144,12 +1177,12 @@ export default function StockDashboard() {
                 </h2>
               </div>
               <button
-                className={isWatched ? styles.watchButtonActive : styles.watchButton}
+                className={watchlist.includes(selectedStock.symbol) ? styles.watchButtonActive : styles.watchButton}
                 type="button"
                 onClick={() => toggleWatchlist(selectedStock.symbol)}
               >
-                {isWatched ? <Star size={17} fill="currentColor" /> : <Plus size={17} />}
-                {isWatched ? t.watching : t.addToWatchlist}
+                <Star size={17} fill={watchlist.includes(selectedStock.symbol) ? "currentColor" : "none"} />
+                {watchlist.includes(selectedStock.symbol) ? t.watchlist : "+ Watch"}
               </button>
             </div>
 
@@ -1166,13 +1199,17 @@ export default function StockDashboard() {
                 <span>{t.sector}</span>
                 <strong>{sectorName(selectedStock, language)}</strong>
               </div>
+              <div>
+                <span>Market cap</span>
+                <strong>{formatCompactNumber(selectedStock.marketCap)}B</strong>
+              </div>
             </div>
             <div className={styles.sourceMeta}>
-              <span>{selectedStock.source ?? "Sample data"}</span>
+              <span>{selectedStock.source ?? "Sample + 1s simulation"}</span>
               <span>
                 {t.updated} {formatFetchedAt(selectedStock.fetchedAt ?? latestFetchedAt, language)}
               </span>
-              <span>Volume {formatCompactNumber(selectedStock.volume, language)}</span>
+              <span>Volume {formatCompactNumber(selectedStock.volume)}</span>
             </div>
 
             <div className={styles.chartControls}>
@@ -1184,7 +1221,7 @@ export default function StockDashboard() {
                     type="button"
                     onClick={() => setChartType(type)}
                   >
-                    {type === "candle" ? <BarChart3 size={15} /> : <LineChart size={15} />}
+                    {type === "candle" ? <CandlestickChart size={15} /> : <LineChart size={15} />}
                     {type === "candle" ? t.candle : t.line}
                   </button>
                 ))}
@@ -1216,119 +1253,87 @@ export default function StockDashboard() {
               >
                 <defs>
                   <linearGradient id="priceArea" x1="0" x2="0" y1="0" y2="1">
-                    <stop offset="0%" stopColor="#a78bfa" stopOpacity="0.3" />
-                    <stop offset="68%" stopColor="#8b5cf6" stopOpacity="0.1" />
-                    <stop offset="100%" stopColor="#22c55e" stopOpacity="0" />
+                    <stop offset="0%" stopColor="#64748b" stopOpacity="0.24" />
+                    <stop offset="100%" stopColor="#0f172a" stopOpacity="0" />
                   </linearGradient>
                 </defs>
-                {yAxisTicks.map((tick) => {
-                  const y = yFor(tick, chartMin, chartMax, chartHeight, chartPadding);
+                {yAxisTicks.map((tickValue) => {
+                  const y = yFor(tickValue, chartMin, chartMax, chartHeight, 20, 52);
 
                   return (
-                    <g key={tick.toFixed(2)}>
-                      <line
-                        className={styles.gridLine}
-                        x1={chartPadding}
-                        x2={chartWidth - chartPadding}
-                        y1={y}
-                        y2={y}
-                      />
-                      <text className={styles.axisLabel} x={chartPadding} y={y - 6}>
-                        {formatAxisPrice(tick, selectedStock.currency)}
+                    <g key={tickValue.toFixed(2)}>
+                      <line className={styles.gridLine} x1={60} x2={chartWidth - 26} y1={y} y2={y} />
+                      <text className={styles.axisLabel} x={8} y={y + 4}>
+                        {selectedStock.currency === "KRW" ? Math.round(tickValue).toLocaleString("ko-KR") : tickValue.toFixed(2)}
                       </text>
                     </g>
                   );
                 })}
                 {xAxisIndexes.map((index) => {
-                  const x = xFor(index, selectedPoints.length, chartWidth, chartPadding);
-                  const label = formatChartPointLabel(selectedPoints[index], range, language);
+                  const x = xFor(index, selectedPoints.length, chartWidth, 60, 26);
 
                   return (
-                    <g key={`${range}-${selectedPoints[index].timestamp ?? selectedPoints[index].label}`}>
-                      <line
-                        className={styles.verticalGridLine}
-                        x1={x}
-                        x2={x}
-                        y1={chartPadding}
-                        y2={chartHeight - chartPadding}
-                      />
-                      <text
-                        className={styles.axisLabel}
-                        textAnchor="middle"
-                        x={x}
-                        y={chartHeight - 8}
-                      >
-                        {label}
+                    <g key={`${range}-${index}`}>
+                      <line className={styles.verticalGridLine} x1={x} x2={x} y1={20} y2={chartHeight - 52} />
+                      <text className={styles.axisLabel} textAnchor="middle" x={x} y={chartHeight - 12}>
+                        {formatChartPointLabel(selectedPoints[index], range, language)}
                       </text>
                     </g>
                   );
                 })}
+                <g className={styles.volumeLayer}>
+                  {selectedPoints.map((point, index) => {
+                    const x = xFor(index, selectedPoints.length, chartWidth, 60, 26);
+                    const height = ((point.volume || 0) / volumeMax) * 36;
+
+                    return (
+                      <rect
+                        className={point.close >= point.open ? styles.volumeUp : styles.volumeDown}
+                        height={height}
+                        key={`v-${index}`}
+                        width={Math.max(2, candleWidth * 0.8)}
+                        x={x - candleWidth * 0.4}
+                        y={chartHeight - 52 - height}
+                      />
+                    );
+                  })}
+                </g>
                 {chartType === "line" ? (
                   <>
                     <path
                       className={styles.areaPath}
-                      d={`${path} L ${chartWidth - chartPadding} ${chartHeight - chartPadding} L ${chartPadding} ${
-                        chartHeight - chartPadding
-                      } Z`}
+                      d={`${path} L ${chartWidth - 26} ${chartHeight - 52} L 60 ${chartHeight - 52} Z`}
                     />
                     <path className={styles.pricePath} d={path} />
                   </>
                 ) : (
                   <g className={styles.candleLayer}>
-                    {selectedCandles.map((candle, index) => {
-                      const x = xFor(index, selectedCandles.length, chartWidth, chartPadding);
-                      const openY = yFor(candle.open, chartMin, chartMax, chartHeight, chartPadding);
-                      const closeY = yFor(candle.close, chartMin, chartMax, chartHeight, chartPadding);
-                      const highY = yFor(candle.high, chartMin, chartMax, chartHeight, chartPadding);
-                      const lowY = yFor(candle.low, chartMin, chartMax, chartHeight, chartPadding);
-                      const isUp = candle.close >= candle.open;
+                    {selectedPoints.map((point, index) => {
+                      const x = xFor(index, selectedPoints.length, chartWidth, 60, 26);
+                      const openY = yFor(point.open, chartMin, chartMax, chartHeight, 20, 52);
+                      const closeY = yFor(point.close, chartMin, chartMax, chartHeight, 20, 52);
+                      const highY = yFor(point.high, chartMin, chartMax, chartHeight, 20, 52);
+                      const lowY = yFor(point.low, chartMin, chartMax, chartHeight, 20, 52);
+                      const isUp = point.close >= point.open;
                       const bodyTop = Math.min(openY, closeY);
-                      const bodyHeight = Math.max(Math.abs(closeY - openY), 4);
+                      const bodyHeight = Math.max(Math.abs(closeY - openY), 2);
 
                       return (
-                        <g
-                          className={isUp ? styles.candleUp : styles.candleDown}
-                          key={`${range}-${index}`}
-                        >
+                        <g className={isUp ? styles.candleUp : styles.candleDown} key={`${range}-${index}`}>
                           <line x1={x} x2={x} y1={highY} y2={lowY} />
-                          <rect
-                            x={x - candleWidth / 2}
-                            y={bodyTop}
-                            width={candleWidth}
-                            height={bodyHeight}
-                            rx="0.5"
-                          />
+                          <rect x={x - candleWidth / 2} y={bodyTop} width={candleWidth} height={bodyHeight} />
                         </g>
                       );
                     })}
                   </g>
                 )}
-                <line
-                  className={styles.activeLine}
-                  x1={activeCoordinates.x}
-                  x2={activeCoordinates.x}
-                  y1={chartPadding}
-                  y2={chartHeight - chartPadding}
-                />
-                <circle
-                  className={styles.activeDot}
-                  cx={activeCoordinates.x}
-                  cy={activeCoordinates.y}
-                  r="6"
-                />
+                <line className={styles.activeLine} x1={activeX} x2={activeX} y1={20} y2={chartHeight - 52} />
+                <circle className={styles.activeDot} cx={activeX} cy={activeY} r="5" />
               </svg>
-              <div
-                className={styles.chartTooltip}
-                style={{ left: `${(activeCoordinates.x / chartWidth) * 100}%` }}
-              >
-                <span>
-                  {formatChartPointLabel(selectedPoint, range, language)}
-                </span>
-                <strong>
-                  {selectedStock.currency === "KRW"
-                    ? `${selectedPointValue.toLocaleString("ko-KR")} KRW`
-                    : `$${selectedPointValue.toFixed(2)}`}
-                </strong>
+              <div className={styles.chartTooltip} style={{ left: `${(activeX / chartWidth) * 100}%` }}>
+                <span>{formatChartPointLabel(selectedPoint, range, language)}</span>
+                <strong>{selectedStock.currency === "KRW" ? formatMoney(selectedPoint.value) : formatMoney(selectedPoint.value, "USD")}</strong>
+                <small>O {selectedPoint.open.toFixed(selectedStock.currency === "KRW" ? 0 : 2)} / C {selectedPoint.close.toFixed(selectedStock.currency === "KRW" ? 0 : 2)}</small>
               </div>
             </div>
 
@@ -1342,19 +1347,11 @@ export default function StockDashboard() {
               </div>
               <div>
                 <span>{t.rangeHigh}</span>
-                <strong>
-                  {selectedStock.currency === "KRW"
-                    ? rangeHigh.toLocaleString("ko-KR")
-                    : rangeHigh.toFixed(2)}
-                </strong>
+                <strong>{selectedStock.currency === "KRW" ? formatMoney(Math.max(...candleExtremes)) : Math.max(...candleExtremes).toFixed(2)}</strong>
               </div>
               <div>
                 <span>{t.rangeLow}</span>
-                <strong>
-                  {selectedStock.currency === "KRW"
-                    ? rangeLow.toLocaleString("ko-KR")
-                    : rangeLow.toFixed(2)}
-                </strong>
+                <strong>{selectedStock.currency === "KRW" ? formatMoney(Math.min(...candleExtremes)) : Math.min(...candleExtremes).toFixed(2)}</strong>
               </div>
               <div>
                 <span>{t.signalQueue}</span>
@@ -1374,12 +1371,7 @@ export default function StockDashboard() {
             </div>
             <div className={styles.watchList}>
               {watchedStocks.map((stock) => (
-                <button
-                  className={styles.watchRow}
-                  key={stock.symbol}
-                  type="button"
-                  onClick={() => selectStock(stock.symbol)}
-                >
+                <button className={styles.watchRow} key={stock.symbol} type="button" onClick={() => setSelectedSymbol(stock.symbol)}>
                   <span>
                     <strong>{stock.symbol}</strong>
                     <small>{signalLabel(stock.signal, language)}</small>
@@ -1391,15 +1383,60 @@ export default function StockDashboard() {
                 </button>
               ))}
             </div>
-            <div className={styles.notePanel}>
-              <LineChart size={18} />
-              <div>
-                <strong>{t.automationPreview}</strong>
-                <p>{t.automationText}</p>
-                <div className={styles.automationSteps}>
-                  <span>{t.dataBridge}</span>
-                  <span>{t.manualReview}</span>
+            <div className={styles.simPanel}>
+              <div className={styles.simHeader}>
+                <Bot size={18} />
+                <strong>{t.portfolioSignalPanel}</strong>
+              </div>
+              <div className={styles.accountGrid}>
+                <div>
+                  <span>{t.accountValue}</span>
+                  <strong>{formatMoney(accountValue)}</strong>
                 </div>
+                <div>
+                  <span>{t.pnl}</span>
+                  <strong className={pnl >= 0 ? styles.positive : styles.negative}>
+                    {pnl >= 0 ? "+" : ""}
+                    {formatMoney(pnl)}
+                  </strong>
+                </div>
+              </div>
+              <div className={styles.simActions}>
+                <label className={styles.autoToggle}>
+                  <input
+                    checked={autoRun}
+                    onChange={(event) => setAutoRun(event.currentTarget.checked)}
+                    type="checkbox"
+                  />
+                  <span>{autoRun ? <Pause size={15} /> : <Play size={15} />}</span>
+                  {autoRun ? t.stop : t.start}
+                </label>
+                <button type="button" onClick={resetSimulation}>
+                  <RotateCcw size={15} />
+                  {t.reset}
+                </button>
+              </div>
+              <div className={styles.ruleList}>
+                <span>{t.activeTheme}: {activeTheme ? themeName(activeTheme, language) : "-"}</span>
+                <span>{t.stopLoss}</span>
+                <span>{t.exitRule}</span>
+              </div>
+              <div className={styles.positionList}>
+                {positions.length ? (
+                  positions.map((position) => {
+                    const stock = stocks.find((item) => item.symbol === position.symbol);
+                    const value = stock ? position.shares * priceToKrw(stock) : 0;
+
+                    return (
+                      <div key={position.symbol}>
+                        <strong>{position.symbol}</strong>
+                        <span>{formatMoney(value)}</span>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <p>{autoRun ? "Waiting for next entry" : "Paused"}</p>
+                )}
               </div>
             </div>
           </aside>
@@ -1410,21 +1447,20 @@ export default function StockDashboard() {
             <div className={styles.panelHeader}>
               <div>
                 <span>{t.portfolioSignalPanel}</span>
-                <strong>{t.sentiment}</strong>
+                <strong>{activeTheme ? themeName(activeTheme, language) : "-"}</strong>
               </div>
-              <a href="#top">{t.viewAll}</a>
             </div>
             <div className={styles.signalBody}>
               <div className={styles.scoreRing}>
-                <span>68</span>
+                <span>{activeTheme ? themeMomentum(activeTheme).toFixed(1) : "0.0"}</span>
               </div>
               <div className={styles.signalTable}>
                 <span>{t.topSignals}</span>
-                {marketStocks.slice(0, 3).map((stock) => (
+                {targetStocks.map((stock) => (
                   <div key={stock.symbol}>
                     <strong>{stock.symbol}</strong>
-                    <span>{stock.strategy}</span>
-                    <small>{signalLabel(stock.signal, language)}</small>
+                    <span>{stockName(stock, language)}</span>
+                    <small>{stock.change > 0 ? "+" : ""}{stock.change.toFixed(2)}%</small>
                   </div>
                 ))}
               </div>
@@ -1434,16 +1470,21 @@ export default function StockDashboard() {
             <div className={styles.panelHeader}>
               <div>
                 <span>{t.researchNotes}</span>
-                <strong>{marketScope === "domestic" ? "KOSPI memo" : "NASDAQ memo"}</strong>
+                <strong>{marketScope === "domestic" ? "KOSPI/KOSDAQ" : "US market"}</strong>
               </div>
             </div>
-            <div className={styles.researchList}>
-              {marketStocks.slice(0, 3).map((stock) => (
-                <div key={stock.symbol}>
-                  <span>{stock.signal}</span>
-                  <strong>{stock.symbol} strategy note</strong>
-                  <small>{stock.strategy}</small>
-                </div>
+            <div className={styles.themeGrid}>
+              {marketThemes.map((theme) => (
+                <button className={theme.id === activeTheme?.id ? styles.themeCardActive : styles.themeCard} key={theme.id} type="button">
+                  <span>{themeName(theme, language)}</span>
+                  <strong>{themeMomentum(theme).toFixed(2)}</strong>
+                  <small>{theme.stocks.slice(0, 3).map((stock) => stock.symbol).join(" / ")}</small>
+                </button>
+              ))}
+            </div>
+            <div className={styles.tradeLog}>
+              {tradeLog.map((entry) => (
+                <span key={entry}>{entry}</span>
               ))}
             </div>
           </div>

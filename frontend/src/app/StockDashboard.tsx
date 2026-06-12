@@ -767,6 +767,33 @@ function buildPath(
     .join(" ");
 }
 
+function movingAveragePath(
+  points: ChartPoint[],
+  period: number,
+  width: number,
+  height: number,
+  min: number,
+  max: number,
+  paddingTop: number,
+  paddingBottom: number,
+) {
+  if (!points.length) {
+    return "";
+  }
+
+  return points
+    .map((point, index) => {
+      const windowPoints = points.slice(Math.max(0, index - period + 1), index + 1);
+      const average = windowPoints.reduce((sum, item) => sum + item.close, 0) / windowPoints.length;
+      const x = xFor(index, points.length, width, 60, 26);
+      const y = yFor(average, min, max, height, paddingTop, paddingBottom);
+
+      return `${index === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
+    })
+    .filter(Boolean)
+    .join(" ");
+}
+
 function axisTickIndexes(count: number) {
   const tickCount = 6;
   const step = Math.max(1, Math.floor((count - 1) / (tickCount - 1)));
@@ -1121,15 +1148,36 @@ export default function StockDashboard() {
 
   const selectedFallbackPoints = selectedStock.series[range];
   const selectedHistoryPoints = chartHistory[selectedStock.symbol]?.[range];
-  const selectedHistoryValues = selectedHistoryPoints?.map((point) => point.value) ?? [];
-  const selectedHistorySpread = selectedHistoryValues.length
-    ? Math.max(...selectedHistoryValues) - Math.min(...selectedHistoryValues)
-    : 0;
-  const hasUsableRealtimeHistory =
-    Boolean(selectedHistoryPoints?.length) &&
-    selectedHistoryValues.length >= Math.min(50, selectedFallbackPoints.length) &&
-    selectedHistorySpread > Math.abs(selectedHistoryValues[selectedHistoryValues.length - 1] ?? 1) * 0.0008;
-  const selectedPoints = hasUsableRealtimeHistory && selectedHistoryPoints ? selectedHistoryPoints : selectedFallbackPoints;
+  const latestRealtimePoint = selectedHistoryPoints?.[selectedHistoryPoints.length - 1];
+  const lastFallbackPoint = selectedFallbackPoints[selectedFallbackPoints.length - 1];
+  const realtimeScale =
+    latestRealtimePoint && lastFallbackPoint?.close ? latestRealtimePoint.close / lastFallbackPoint.close : 1;
+  const selectedPoints =
+    latestRealtimePoint && Number.isFinite(realtimeScale) && realtimeScale > 0 && (range === "LIVE" || range === "1D")
+      ? selectedFallbackPoints.map((point, index) => {
+          const scaledPoint = {
+            ...point,
+            value: point.value * realtimeScale,
+            open: point.open * realtimeScale,
+            high: point.high * realtimeScale,
+            low: point.low * realtimeScale,
+            close: point.close * realtimeScale,
+          };
+
+          if (index !== selectedFallbackPoints.length - 1) {
+            return scaledPoint;
+          }
+
+          return {
+            ...scaledPoint,
+            value: latestRealtimePoint.close,
+            close: latestRealtimePoint.close,
+            high: Math.max(scaledPoint.high, latestRealtimePoint.high, latestRealtimePoint.close),
+            low: Math.min(scaledPoint.low, latestRealtimePoint.low, latestRealtimePoint.close),
+            volume: latestRealtimePoint.volume || point.volume,
+          };
+        })
+      : selectedFallbackPoints;
   const selectedValues = selectedPoints.map((point) => point.value);
   const selectedIndex = Math.min(activePoint ?? selectedPoints.length - 1, selectedPoints.length - 1);
   const selectedPoint = selectedPoints[selectedIndex];
@@ -1151,11 +1199,23 @@ export default function StockDashboard() {
   const chartMin = rawChartMin - chartSpread * 0.12;
   const chartMax = rawChartMax + chartSpread * 0.1;
   const path = buildPath(selectedPoints, chartWidth, chartHeight, chartMin, chartMax, priceTop, priceBottomPadding);
+  const ma5Path = movingAveragePath(selectedPoints, 5, chartWidth, chartHeight, chartMin, chartMax, priceTop, priceBottomPadding);
+  const ma20Path = movingAveragePath(selectedPoints, 20, chartWidth, chartHeight, chartMin, chartMax, priceTop, priceBottomPadding);
+  const ma60Path = movingAveragePath(selectedPoints, 60, chartWidth, chartHeight, chartMin, chartMax, priceTop, priceBottomPadding);
+  const ma120Path = movingAveragePath(selectedPoints, 120, chartWidth, chartHeight, chartMin, chartMax, priceTop, priceBottomPadding);
   const xAxisIndexes = axisTickIndexes(selectedPoints.length);
   const yAxisTicks = [0, 1, 2, 3, 4].map((item) => chartMax - ((chartMax - chartMin) * item) / 4);
   const candleWidth = Math.max(3, Math.min(10, ((chartWidth - 86) / selectedPoints.length) * 0.55));
   const latestPoint = selectedPoints[selectedPoints.length - 1];
   const latestY = yFor(latestPoint.value, chartMin, chartMax, chartHeight, priceTop, priceBottomPadding);
+  const highestPoint = selectedPoints.reduce((best, point, index) => (point.high > best.point.high ? { point, index } : best), {
+    point: selectedPoints[0],
+    index: 0,
+  });
+  const lowestPoint = selectedPoints.reduce((best, point, index) => (point.low < best.point.low ? { point, index } : best), {
+    point: selectedPoints[0],
+    index: 0,
+  });
   const showActivePoint = activePoint !== null;
   const activeX = xFor(selectedIndex, selectedPoints.length, chartWidth, 60, 26);
   const activeY = yFor(selectedPoint.value, chartMin, chartMax, chartHeight, priceTop, priceBottomPadding);
@@ -1549,12 +1609,18 @@ export default function StockDashboard() {
                   return (
                     <g key={tickValue.toFixed(2)}>
                       <line className={styles.gridLine} x1={60} x2={chartWidth - 26} y1={y} y2={y} />
-                      <text className={styles.axisLabel} x={8} y={y + 4}>
+                      <text className={styles.axisLabel} textAnchor="end" x={chartWidth - 8} y={y + 4}>
                         {selectedStock.currency === "KRW" ? Math.round(tickValue).toLocaleString("ko-KR") : tickValue.toFixed(2)}
                       </text>
                     </g>
                   );
                 })}
+                <g className={styles.maLegend}>
+                  <text x="10" y="16">5</text>
+                  <text x="35" y="16">20</text>
+                  <text x="66" y="16">60</text>
+                  <text x="96" y="16">120</text>
+                </g>
                 {xAxisIndexes.map((index) => {
                   const x = xFor(index, selectedPoints.length, chartWidth, 60, 26);
 
@@ -1613,6 +1679,26 @@ export default function StockDashboard() {
                     })}
                   </g>
                 )}
+                {ma120Path ? <path className={styles.ma120Path} d={ma120Path} /> : null}
+                {ma60Path ? <path className={styles.ma60Path} d={ma60Path} /> : null}
+                {ma20Path ? <path className={styles.ma20Path} d={ma20Path} /> : null}
+                {ma5Path ? <path className={styles.ma5Path} d={ma5Path} /> : null}
+                <g className={styles.extremeLabels}>
+                  <text
+                    textAnchor="middle"
+                    x={xFor(highestPoint.index, selectedPoints.length, chartWidth, 60, 26)}
+                    y={Math.max(14, yFor(highestPoint.point.high, chartMin, chartMax, chartHeight, priceTop, priceBottomPadding) - 10)}
+                  >
+                    최고 {selectedStock.currency === "KRW" ? Math.round(highestPoint.point.high).toLocaleString("ko-KR") : highestPoint.point.high.toFixed(2)}
+                  </text>
+                  <text
+                    textAnchor="middle"
+                    x={xFor(lowestPoint.index, selectedPoints.length, chartWidth, 60, 26)}
+                    y={Math.min(priceBottomY - 8, yFor(lowestPoint.point.low, chartMin, chartMax, chartHeight, priceTop, priceBottomPadding) + 18)}
+                  >
+                    최저 {selectedStock.currency === "KRW" ? Math.round(lowestPoint.point.low).toLocaleString("ko-KR") : lowestPoint.point.low.toFixed(2)}
+                  </text>
+                </g>
                 <line className={styles.volumeDivider} x1={60} x2={chartWidth - 26} y1={volumeTopY - 8} y2={volumeTopY - 8} />
                 <line className={styles.currentPriceLine} x1={60} x2={chartWidth - 26} y1={latestY} y2={latestY} />
                 {showActivePoint ? (

@@ -60,5 +60,7 @@ automated trading assistant.
   ticks, a 10,000,000 KRW paper-trading account with reset, and a theme-rotation automation panel.
 - The dashboard stock list is grouped by theme, supports domestic/overseas paper-trading views, and
   falls back to seeded historical candles when very short realtime buffers would make the chart flat.
+- The main chart uses a classic brokerage-style candlestick view with 5/20/60/120 moving averages,
+  high/low labels, right-side price ticks, volume bars, and realtime quote scaling over stable history.
 - The paper-trading simulation applies a first-pass one-way trading cost assumption of 0.065%
   (commission plus estimated slippage) so excessive round trips reduce simulated profit.

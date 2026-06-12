@@ -14,9 +14,14 @@ test("brokerage dashboard controls work", async ({ page }) => {
   await expect(page.getByTestId("auto-run-toggle")).toBeChecked();
   await expect(page.getByTestId("simulation-reset")).toBeVisible();
   await expect(page.locator('g[class*="candleLayer"] rect')).toHaveCount(84);
+  await expect(page.locator('path[class*="ma5Path"]')).toHaveCount(1);
+  await expect(page.locator('path[class*="ma20Path"]')).toHaveCount(1);
+  await expect(page.locator('path[class*="ma60Path"]')).toHaveCount(1);
+  await expect(page.locator('path[class*="ma120Path"]')).toHaveCount(1);
   await expect(page.locator('svg[class*="themeSparkline"]')).toHaveCount(2);
   await expect(page.locator('button[class*="stockThemeHeader"]').first()).toBeVisible();
   await expect(page.locator('line[class*="volumeDivider"]')).toHaveCount(1);
+  await expect(page.getByText(/최고/).first()).toBeVisible();
   await expect(page.getByText("거래비용 0.065% / 편도")).toBeVisible();
 
   await page.getByTestId("market-tab-overseas").click();
@@ -36,6 +41,8 @@ test("brokerage dashboard controls work", async ({ page }) => {
   await expect(page.getByTestId("auto-run-toggle")).not.toBeChecked();
   await page.getByTestId("auto-run-toggle").check();
   await expect(page.getByTestId("auto-run-toggle")).toBeChecked();
+  await page.getByTestId("auto-run-toggle").uncheck();
+  await expect(page.getByTestId("auto-run-toggle")).not.toBeChecked();
 
   await page.getByTestId("simulation-reset").click();
   await expect(page.getByText("Reset: 10,000,000 KRW paper account")).toBeVisible();

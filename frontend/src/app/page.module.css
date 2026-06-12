@@ -631,48 +631,44 @@
 
 .chartCanvas {
   position: relative;
-  min-height: 452px;
-  border: 1px solid #1e2936;
+  aspect-ratio: 900 / 420;
+  min-height: 0;
+  border: 1px solid #cfd6df;
   border-radius: 6px;
-  background:
-    linear-gradient(90deg, rgba(148, 163, 184, 0.06) 1px, transparent 1px),
-    linear-gradient(180deg, rgba(148, 163, 184, 0.06) 1px, transparent 1px),
-    #080d12;
-  background-size: 58px 58px, 58px 58px, auto;
+  background: #ffffff;
   padding: 10px;
 }
 
 .chartCanvas svg {
   display: block;
   width: 100%;
-  height: auto;
-  min-height: 420px;
+  height: 100%;
   touch-action: none;
 }
 
 .gridLine {
-  stroke: rgba(148, 163, 184, 0.18);
+  stroke: #e6ebf0;
   stroke-width: 1;
 }
 
 .verticalGridLine {
-  stroke: rgba(148, 163, 184, 0.09);
+  stroke: #edf1f5;
   stroke-width: 1;
 }
 
 .volumeDivider {
-  stroke: rgba(148, 163, 184, 0.28);
+  stroke: #9ca3af;
   stroke-width: 1;
 }
 
 .currentPriceLine {
-  stroke: rgba(226, 232, 240, 0.5);
-  stroke-dasharray: 3 5;
-  stroke-width: 1;
+  stroke: #64748b;
+  stroke-dasharray: 2 4;
+  stroke-width: 0.9;
 }
 
 .axisLabel {
-  fill: #7f8d9b;
+  fill: #5f6368;
   font-size: 10px;
   font-weight: 760;
   letter-spacing: 0;
@@ -680,32 +676,32 @@
 }
 
 .areaPath {
-  fill: url("#priceArea");
+  fill: rgba(59, 130, 246, 0.08);
 }
 
 .pricePath {
   fill: none;
-  stroke: #f8fafc;
+  stroke: #2563eb;
   stroke-linecap: round;
   stroke-linejoin: round;
-  stroke-width: 1.8;
+  stroke-width: 1.35;
 }
 
 .volumeLayer rect {
-  opacity: 0.46;
+  opacity: 0.74;
 }
 
 .volumeUp {
-  fill: #ef4444;
+  fill: #ef332f;
 }
 
 .volumeDown {
-  fill: #3b82f6;
+  fill: #2f80ed;
 }
 
 .candleLayer line {
   shape-rendering: crispEdges;
-  stroke-width: 1.15;
+  stroke-width: 1;
 }
 
 .candleLayer rect {
@@ -715,31 +711,84 @@
 
 .candleUp line,
 .candleUp rect {
-  stroke: #ef4444;
+  stroke: #ef332f;
 }
 
 .candleUp rect {
-  fill: rgba(239, 68, 68, 0.78);
+  fill: #ef332f;
 }
 
 .candleDown line,
 .candleDown rect {
-  stroke: #3b82f6;
+  stroke: #2f80ed;
 }
 
 .candleDown rect {
-  fill: rgba(59, 130, 246, 0.72);
+  fill: #2f80ed;
+}
+
+.ma5Path,
+.ma20Path,
+.ma60Path,
+.ma120Path {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.25;
+}
+
+.ma5Path {
+  stroke: #22a047;
+}
+
+.ma20Path {
+  stroke: #ef4444;
+}
+
+.ma60Path {
+  stroke: #f97316;
+}
+
+.ma120Path {
+  stroke: #a855f7;
+}
+
+.maLegend text {
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.maLegend text:nth-child(1) {
+  fill: #22a047;
+}
+
+.maLegend text:nth-child(2) {
+  fill: #ef4444;
+}
+
+.maLegend text:nth-child(3) {
+  fill: #f97316;
+}
+
+.maLegend text:nth-child(4) {
+  fill: #a855f7;
+}
+
+.extremeLabels text {
+  fill: #ef332f;
+  font-size: 10px;
+  font-weight: 850;
 }
 
 .activeLine {
-  stroke: rgba(226, 232, 240, 0.55);
+  stroke: rgba(15, 23, 42, 0.45);
   stroke-dasharray: 5 5;
   stroke-width: 1.4;
 }
 
 .activeDot {
-  fill: #0b1117;
-  stroke: #f8fafc;
+  fill: #ffffff;
+  stroke: #111827;
   stroke-width: 3;
 }
 

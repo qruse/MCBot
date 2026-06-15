@@ -135,12 +135,16 @@ def test_read_theme_universe(client: TestClient) -> None:
 
     assert response.status_code == 200
     body = response.json()
-    assert body["count"] == 6
+    assert body["count"] == 17
     assert body["themes"][0]["key"] == "semiconductors"
     assert body["themes"][0]["top_market_cap"][0]["market_cap_rank"] == 1
-    assert body["themes"][-2]["name_ko"] == "국내 반도체"
-    assert body["themes"][-2]["top_market_cap"][0]["symbol"] == "005930"
-    assert len(body["themes"][-1]["top_market_cap"]) == 10
+    themes_by_key = {theme["key"]: theme for theme in body["themes"]}
+    assert themes_by_key["korea-semiconductors"]["name_ko"] == "국내 반도체"
+    assert themes_by_key["korea-semiconductors"]["top_market_cap"][0]["symbol"] == "005930"
+    assert themes_by_key["quantum-computing"]["name_ko"] == "양자컴퓨터"
+    assert themes_by_key["us-inverse-etfs"]["top_market_cap"][0]["symbol"] == "SH"
+    assert themes_by_key["korea-inverse-etfs"]["top_market_cap"][1]["symbol"] == "252670"
+    assert len(themes_by_key["korea-inverse-etfs"]["top_market_cap"]) == 10
 
 
 @pytest.mark.parametrize(

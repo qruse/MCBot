@@ -129,6 +129,7 @@
 }
 
 .mainStage {
+  min-width: 0;
   padding: 16px;
 }
 
@@ -374,6 +375,7 @@
   grid-template-columns: 300px minmax(0, 1fr) 306px;
   gap: 12px;
   align-items: start;
+  min-width: 0;
 }
 
 .resultsPanel,
@@ -381,6 +383,7 @@
 .watchPanel,
 .signalPanel,
 .researchPanel {
+  min-width: 0;
   border: 1px solid #1e2936;
   border-radius: 6px;
   background: #101820;
@@ -645,7 +648,8 @@
 .chartCanvas {
   position: relative;
   aspect-ratio: 900 / 420;
-  min-height: 0;
+  min-height: 320px;
+  overflow: hidden;
   border: 1px solid #243241;
   border-radius: 6px;
   background: #0a1018;
@@ -785,12 +789,6 @@
 
 .maLegend text:nth-child(4) {
   fill: #a855f7;
-}
-
-.extremeLabels text {
-  fill: #f87171;
-  font-size: 10px;
-  font-weight: 850;
 }
 
 .activeLine {
@@ -943,7 +941,7 @@
 
 .ruleList span,
 .tradeLog span,
-.positionList div,
+.positionRow,
 .positionList p {
   border: 1px solid #1e2936;
   border-radius: 6px;
@@ -955,9 +953,54 @@
   padding: 7px 8px;
 }
 
-.positionList div {
+.positionRow {
+  display: grid;
+  width: 100%;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  text-align: left;
+  cursor: pointer;
+}
+
+.positionRow strong,
+.positionRow span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.positionRow strong {
+  color: #ffffff;
+  font-size: 13px;
+}
+
+.positionRow strong small {
+  overflow: hidden;
+  color: #8fa0af;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.positionRow > span {
+  justify-items: end;
+  color: #dbeafe;
+  white-space: nowrap;
+}
+
+.sidecarAlert {
   display: flex;
-  justify-content: space-between;
+  align-items: flex-start;
+  gap: 7px;
+  border: 1px solid #7f1d1d;
+  border-radius: 6px;
+  background: rgba(127, 29, 29, 0.28);
+  color: #fecaca;
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1.35;
+  padding: 9px;
 }
 
 .lowerGrid {
@@ -1110,6 +1153,7 @@
   .navItem:hover,
   .stockThemeHeader:hover,
   .stockRow:hover,
+  .positionRow:hover,
   .watchRow:hover,
   .watchButton:hover,
   .watchButtonActive:hover,
@@ -1232,5 +1276,18 @@
 
   .signalTable div {
     grid-template-columns: 1fr;
+  }
+
+  .chartCanvas {
+    aspect-ratio: auto;
+    min-height: 260px;
+  }
+
+  .rangeTabs {
+    grid-template-columns: repeat(7, minmax(34px, 1fr));
+  }
+
+  .rangeTabs button {
+    font-size: 11px;
   }
 }

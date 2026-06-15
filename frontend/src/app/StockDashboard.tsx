@@ -2,12 +2,9 @@
 
 import {
   Activity,
-  BarChart3,
   Bell,
   Bot,
-  Briefcase,
   CandlestickChart,
-  FileText,
   Home,
   LineChart,
   Pause,
@@ -20,7 +17,6 @@ import {
   TrendingDown,
   TrendingUp,
   X,
-  Zap,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
@@ -174,9 +170,15 @@ const usdKrw = 1380;
 const kisDomesticOnlineCommissionRate = 0.000140527;
 const kisUsOnlineCommissionRate = 0.0025;
 const usSecSellFeeRate = 0.0000206;
+const portfolioTargetSize = 5;
+const positionStopLossRate = 0.02;
+const sidecarDrawdownRate = 0.05;
+const minThemeMomentumForEntry = 0.12;
 const maRolloverSlopeBuffer = 0.0025;
 const maRolloverSpreadBuffer = 0.004;
 const maRolloverThemeMomentumFloor = -0.18;
+const chartPaddingLeft = 64;
+const chartPaddingRight = 82;
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 
 const copy = {
@@ -230,7 +232,7 @@ const copy = {
     researchNotes: "Theme TOP10",
     portfolioSignalPanel: "Auto strategy",
     sentiment: "Momentum",
-    topSignals: "Target TOP3",
+    topSignals: "Target TOP5",
     noMatches: "No matching symbols",
     reset: "Reset",
     start: "Run",
@@ -239,8 +241,8 @@ const copy = {
     cash: "Cash",
     pnl: "P/L",
     activeTheme: "Active theme",
-    stopLoss: "Stop loss",
-    exitRule: "Exit rule",
+    stopLoss: "2% stop / 5% sidecar",
+    exitRule: "Held-stock MA break / theme rollover / 5 min to close",
     rangeLabels: {
       LIVE: "Live",
       "1D": "1D",
@@ -301,7 +303,7 @@ const copy = {
     researchNotes: "\uD14C\uB9C8 TOP10",
     portfolioSignalPanel: "\uC790\uB3D9\uB9E4\uB9E4 \uC804\uB7B5",
     sentiment: "\uBAA8\uBA58\uD140",
-    topSignals: "\uD22C\uC790 TOP3",
+    topSignals: "\uD22C\uC790 TOP5",
     noMatches: "\uAC80\uC0C9 \uACB0\uACFC \uC5C6\uC74C",
     reset: "\uCD08\uAE30\uD654",
     start: "\uC2E4\uD589",
@@ -310,8 +312,8 @@ const copy = {
     cash: "\uD604\uAE08",
     pnl: "\uC218\uC775",
     activeTheme: "\uC120\uD0DD \uD14C\uB9C8",
-    stopLoss: "2% \uC190\uC808",
-    exitRule: "\uC774\uD3C9 \uAEBC\uC9D0/\uC7A5\uB9C8\uAC10 5\uBD84",
+    stopLoss: "2% \uC190\uC808 / 5% \uC0AC\uC774\uB4DC\uCE74",
+    exitRule: "\uBCF4\uC720 MA \uAEBC\uC9D0/\uD14C\uB9C8 \uC774\uD0C8/\uC7A5\uB9C8\uAC10 5\uBD84",
     rangeLabels: {
       LIVE: "\uC2E4\uC2DC\uAC04",
       "1D": "1D",
@@ -398,6 +400,209 @@ const themeSeed = [
     ],
   },
 ] as const;
+
+const additionalThemeSeed = [
+  {
+    id: "quantum-computing",
+    name: "Quantum Computing",
+    nameKo: "\uc591\uc790\ucef4\ud4e8\ud130",
+    region: "overseas" as const,
+    stocks: [
+      ["IBM", "IBM", "IBM", "NYSE", 284.8, 1.24, 2_620_000],
+      ["GOOGL", "Alphabet Class A", "Alphabet Class A", "NASDAQ", 182.34, 0.88, 2_245_000],
+      ["MSFT", "Microsoft", "Microsoft", "NASDAQ", 472.11, 0.72, 3_510_000],
+      ["IONQ", "IonQ", "IonQ", "NYSE", 43.2, 2.82, 128_000],
+      ["RGTI", "Rigetti Computing", "Rigetti Computing", "NASDAQ", 12.18, 2.34, 74_000],
+      ["QBTS", "D-Wave Quantum", "D-Wave Quantum", "NYSE", 15.42, 1.96, 68_000],
+      ["QUBT", "Quantum Computing Inc.", "Quantum Computing Inc.", "NASDAQ", 9.62, 1.44, 42_000],
+      ["HON", "Honeywell", "Honeywell", "NASDAQ", 228.6, 0.42, 148_000],
+      ["ARQQ", "Arqit Quantum", "Arqit Quantum", "NASDAQ", 18.24, 1.08, 31_000],
+      ["QTUM", "Defiance Quantum ETF", "Defiance Quantum ETF", "NYSEARCA", 82.46, 0.64, 24_000],
+    ],
+  },
+  {
+    id: "power-grid",
+    name: "Power and Grid",
+    nameKo: "\uc804\ub825/\uadf8\ub9ac\ub4dc",
+    region: "overseas" as const,
+    stocks: [
+      ["GEV", "GE Vernova", "GE Vernova", "NYSE", 512.4, 1.72, 142_000],
+      ["ETN", "Eaton", "Eaton", "NYSE", 358.2, 1.26, 138_000],
+      ["PWR", "Quanta Services", "Quanta Services", "NYSE", 318.7, 1.54, 91_000],
+      ["VRT", "Vertiv", "Vertiv", "NYSE", 124.6, 1.88, 63_000],
+      ["HUBB", "Hubbell", "Hubbell", "NYSE", 412.8, 0.84, 29_000],
+      ["ABBNY", "ABB ADR", "ABB ADR", "OTC", 58.4, 0.62, 119_000],
+      ["SBGSY", "Schneider Electric ADR", "Schneider Electric ADR", "OTC", 55.6, 0.78, 112_000],
+      ["AEP", "American Electric Power", "American Electric Power", "NASDAQ", 104.2, 0.36, 54_000],
+      ["NEE", "NextEra Energy", "NextEra Energy", "NYSE", 78.1, 0.28, 162_000],
+      ["SO", "Southern Company", "Southern Company", "NYSE", 91.7, 0.31, 99_000],
+    ],
+  },
+  {
+    id: "data-centers",
+    name: "Data Centers",
+    nameKo: "\ub370\uc774\ud130\uc13c\ud130",
+    region: "overseas" as const,
+    stocks: [
+      ["EQIX", "Equinix", "Equinix", "NASDAQ", 816.2, 0.74, 78_000],
+      ["DLR", "Digital Realty", "Digital Realty", "NYSE", 174.5, 0.88, 58_000],
+      ["AMT", "American Tower", "American Tower", "NYSE", 194.8, 0.22, 91_000],
+      ["VRT", "Vertiv", "Vertiv", "NYSE", 124.6, 1.92, 63_000],
+      ["ETN", "Eaton", "Eaton", "NYSE", 358.2, 1.18, 138_000],
+      ["ANET", "Arista Networks", "Arista Networks", "NYSE", 96.4, 1.12, 121_000],
+      ["SMCI", "Super Micro Computer", "Super Micro Computer", "NASDAQ", 48.7, 1.64, 28_000],
+      ["DELL", "Dell Technologies", "Dell Technologies", "NYSE", 126.3, 0.94, 88_000],
+      ["NVDA", "NVIDIA Corp.", "NVIDIA Corp.", "NASDAQ", 214.75, 1.52, 5_280_000],
+      ["AVGO", "Broadcom Inc.", "Broadcom Inc.", "NASDAQ", 1812.4, 1.06, 745_000],
+    ],
+  },
+  {
+    id: "nuclear-energy",
+    name: "Nuclear Energy",
+    nameKo: "\uc6d0\uc804/\uc6b0\ub77c\ub284",
+    region: "overseas" as const,
+    stocks: [
+      ["CEG", "Constellation Energy", "Constellation Energy", "NASDAQ", 318.4, 1.46, 99_000],
+      ["VST", "Vistra", "Vistra", "NYSE", 184.2, 1.68, 65_000],
+      ["CCJ", "Cameco", "Cameco", "NYSE", 74.6, 1.08, 32_000],
+      ["BWXT", "BWX Technologies", "BWX Technologies", "NYSE", 138.1, 0.84, 13_000],
+      ["SMR", "NuScale Power", "NuScale Power", "NYSE", 38.2, 2.08, 11_000],
+      ["OKLO", "Oklo", "Oklo", "NYSE", 52.3, 2.42, 9_600],
+      ["LEU", "Centrus Energy", "Centrus Energy", "NYSE", 112.8, 1.26, 1_900],
+      ["UEC", "Uranium Energy", "Uranium Energy", "NYSEAMERICAN", 9.8, 0.96, 4_200],
+      ["URA", "Global X Uranium ETF", "Global X Uranium ETF", "NYSEARCA", 43.6, 0.72, 3_900],
+      ["NLR", "VanEck Uranium and Nuclear ETF", "VanEck Uranium and Nuclear ETF", "NYSEARCA", 102.4, 0.58, 1_200],
+    ],
+  },
+  {
+    id: "robotics-humanoids",
+    name: "Robotics and Humanoids",
+    nameKo: "\ub85c\ubd07/\ud734\uba38\ub178\uc774\ub4dc",
+    region: "overseas" as const,
+    stocks: [
+      ["ISRG", "Intuitive Surgical", "Intuitive Surgical", "NASDAQ", 548.7, 0.96, 191_000],
+      ["TSLA", "Tesla", "Tesla", "NASDAQ", 198.3, 1.18, 633_000],
+      ["TER", "Teradyne", "Teradyne", "NASDAQ", 141.2, 0.74, 22_000],
+      ["SYM", "Symbotic", "Symbotic", "NASDAQ", 42.8, 1.86, 24_000],
+      ["PATH", "UiPath", "UiPath", "NYSE", 14.7, 0.82, 8_200],
+      ["ABBNY", "ABB ADR", "ABB ADR", "OTC", 58.4, 0.54, 119_000],
+      ["FANUY", "Fanuc ADR", "Fanuc ADR", "OTC", 14.9, 0.36, 32_000],
+      ["ROBO", "ROBO Global Robotics ETF", "ROBO Global Robotics ETF", "NYSEARCA", 59.8, 0.48, 1_500],
+      ["BOTZ", "Global X Robotics ETF", "Global X Robotics ETF", "NASDAQ", 33.2, 0.52, 2_800],
+      ["IRBT", "iRobot", "iRobot", "NASDAQ", 8.1, 0.22, 240],
+    ],
+  },
+  {
+    id: "defense",
+    name: "Defense",
+    nameKo: "\ubc29\uc0b0",
+    region: "overseas" as const,
+    stocks: [
+      ["RTX", "RTX", "RTX", "NYSE", 146.8, 0.72, 196_000],
+      ["LMT", "Lockheed Martin", "Lockheed Martin", "NYSE", 488.6, 0.58, 116_000],
+      ["NOC", "Northrop Grumman", "Northrop Grumman", "NYSE", 518.4, 0.66, 76_000],
+      ["GD", "General Dynamics", "General Dynamics", "NYSE", 294.6, 0.44, 81_000],
+      ["LHX", "L3Harris Technologies", "L3Harris Technologies", "NYSE", 238.1, 0.54, 45_000],
+      ["HII", "Huntington Ingalls", "Huntington Ingalls", "NYSE", 244.9, 0.31, 9_700],
+      ["LDOS", "Leidos", "Leidos", "NYSE", 152.4, 0.47, 20_000],
+      ["TXT", "Textron", "Textron", "NYSE", 87.8, 0.36, 16_000],
+      ["KTOS", "Kratos Defense", "Kratos Defense", "NASDAQ", 34.7, 1.02, 5_200],
+      ["ITA", "iShares US Aerospace & Defense ETF", "iShares US Aerospace & Defense ETF", "BATS", 151.6, 0.48, 6_100],
+    ],
+  },
+  {
+    id: "aerospace-space",
+    name: "Aerospace and Space",
+    nameKo: "\uc6b0\uc8fc\ud56d\uacf5",
+    region: "overseas" as const,
+    stocks: [
+      ["BA", "Boeing", "Boeing", "NYSE", 183.5, 0.84, 113_000],
+      ["AIR", "Airbus ADR", "Airbus ADR", "OTC", 43.2, 0.62, 138_000],
+      ["GE", "GE Aerospace", "GE Aerospace", "NYSE", 251.2, 0.76, 272_000],
+      ["RTX", "RTX", "RTX", "NYSE", 146.8, 0.62, 196_000],
+      ["LMT", "Lockheed Martin", "Lockheed Martin", "NYSE", 488.6, 0.42, 116_000],
+      ["NOC", "Northrop Grumman", "Northrop Grumman", "NYSE", 518.4, 0.48, 76_000],
+      ["RKLB", "Rocket Lab", "Rocket Lab", "NASDAQ", 28.4, 1.74, 14_000],
+      ["ASTS", "AST SpaceMobile", "AST SpaceMobile", "NASDAQ", 46.8, 2.12, 12_000],
+      ["IRDM", "Iridium Communications", "Iridium Communications", "NASDAQ", 28.7, 0.38, 3_300],
+      ["UFO", "Procure Space ETF", "Procure Space ETF", "NASDAQ", 22.8, 0.42, 120],
+    ],
+  },
+  {
+    id: "biotech",
+    name: "Biotech",
+    nameKo: "\ubc14\uc774\uc624",
+    region: "overseas" as const,
+    stocks: [
+      ["AMGN", "Amgen", "Amgen", "NASDAQ", 306.8, 0.32, 164_000],
+      ["GILD", "Gilead Sciences", "Gilead Sciences", "NASDAQ", 111.2, 0.44, 139_000],
+      ["REGN", "Regeneron", "Regeneron", "NASDAQ", 742.5, 0.58, 81_000],
+      ["VRTX", "Vertex Pharmaceuticals", "Vertex Pharmaceuticals", "NASDAQ", 474.7, 0.64, 122_000],
+      ["MRNA", "Moderna", "Moderna", "NASDAQ", 38.6, 1.14, 15_000],
+      ["BIIB", "Biogen", "Biogen", "NASDAQ", 155.2, 0.46, 22_000],
+      ["ILMN", "Illumina", "Illumina", "NASDAQ", 118.9, 0.72, 19_000],
+      ["BNTX", "BioNTech", "BioNTech", "NASDAQ", 104.8, 0.52, 25_000],
+      ["ALNY", "Alnylam", "Alnylam", "NASDAQ", 284.4, 0.76, 37_000],
+      ["CRSP", "CRISPR Therapeutics", "CRISPR Therapeutics", "NASDAQ", 58.2, 1.26, 5_500],
+    ],
+  },
+  {
+    id: "blockchain",
+    name: "Blockchain",
+    nameKo: "\ube14\ub85d\uccb4\uc778",
+    region: "overseas" as const,
+    stocks: [
+      ["COIN", "Coinbase", "Coinbase", "NASDAQ", 312.4, 1.62, 78_000],
+      ["MSTR", "MicroStrategy", "MicroStrategy", "NASDAQ", 1642.8, 2.08, 42_000],
+      ["MARA", "MARA Holdings", "MARA Holdings", "NASDAQ", 22.4, 1.86, 7_800],
+      ["RIOT", "Riot Platforms", "Riot Platforms", "NASDAQ", 13.2, 1.58, 4_100],
+      ["CLSK", "CleanSpark", "CleanSpark", "NASDAQ", 18.9, 1.72, 5_400],
+      ["HUT", "Hut 8", "Hut 8", "NASDAQ", 21.4, 1.36, 2_300],
+      ["BITF", "Bitfarms", "Bitfarms", "NASDAQ", 2.6, 1.08, 1_100],
+      ["GLXY", "Galaxy Digital", "Galaxy Digital", "NASDAQ", 24.8, 1.24, 8_600],
+      ["BLOK", "Amplify Transformational Data ETF", "Amplify Transformational Data ETF", "NYSEARCA", 43.2, 0.88, 820],
+      ["IBIT", "iShares Bitcoin Trust ETF", "iShares Bitcoin Trust ETF", "NASDAQ", 62.4, 0.94, 72_000],
+    ],
+  },
+  {
+    id: "us-inverse-etfs",
+    name: "US Inverse ETFs",
+    nameKo: "\ubbf8\uad6d \uc778\ubc84\uc2a4 ETF",
+    region: "overseas" as const,
+    stocks: [
+      ["SH", "ProShares Short S&P500", "ProShares Short S&P500", "NYSEARCA", 38.2, -0.42, 1_600],
+      ["PSQ", "ProShares Short QQQ", "ProShares Short QQQ", "NYSEARCA", 34.6, -0.58, 1_300],
+      ["DOG", "ProShares Short Dow30", "ProShares Short Dow30", "NYSEARCA", 29.4, -0.22, 380],
+      ["SDS", "ProShares UltraShort S&P500", "ProShares UltraShort S&P500", "NYSEARCA", 18.7, -0.86, 620],
+      ["QID", "ProShares UltraShort QQQ", "ProShares UltraShort QQQ", "NYSEARCA", 24.3, -1.12, 520],
+      ["SQQQ", "ProShares UltraPro Short QQQ", "ProShares UltraPro Short QQQ", "NASDAQ", 16.8, -1.72, 3_800],
+      ["SPXU", "ProShares UltraPro Short S&P500", "ProShares UltraPro Short S&P500", "NYSEARCA", 22.6, -1.44, 980],
+      ["TZA", "Direxion Daily Small Cap Bear 3X", "Direxion Daily Small Cap Bear 3X", "NYSEARCA", 14.4, -1.28, 430],
+      ["SOXS", "Direxion Daily Semiconductor Bear 3X", "Direxion Daily Semiconductor Bear 3X", "NYSEARCA", 10.8, -2.08, 520],
+      ["LABD", "Direxion Daily S&P Biotech Bear 3X", "Direxion Daily S&P Biotech Bear 3X", "NYSEARCA", 8.7, -1.36, 160],
+    ],
+  },
+  {
+    id: "korea-inverse-etfs",
+    name: "Korea Inverse ETFs",
+    nameKo: "\uad6d\ub0b4 \uc778\ubc84\uc2a4 ETF",
+    region: "domestic" as const,
+    stocks: [
+      ["114800", "KODEX Inverse", "KODEX Inverse", "KOSPI", 983, -0.34, 2_300],
+      ["252670", "KODEX 200 Futures Inverse 2X", "KODEX 200 Futures Inverse 2X", "KOSPI", 84, -0.72, 927],
+      ["251340", "KODEX KOSDAQ150 Futures Inverse", "KODEX KOSDAQ150 Futures Inverse", "KOSPI", 3940, -0.42, 690],
+      ["123310", "TIGER Inverse", "TIGER Inverse", "KOSPI", 5080, -0.31, 540],
+      ["252710", "TIGER 200 Futures Inverse 2X", "TIGER 200 Futures Inverse 2X", "KOSPI", 86, -0.69, 430],
+      ["250780", "TIGER KOSDAQ150 Futures Inverse", "TIGER KOSDAQ150 Futures Inverse", "KOSPI", 4820, -0.38, 390],
+      ["253160", "ARIRANG 200 Futures Inverse 2X", "ARIRANG 200 Futures Inverse 2X", "KOSPI", 91, -0.66, 220],
+      ["253230", "KOSEF 200 Futures Inverse 2X", "KOSEF 200 Futures Inverse 2X", "KOSPI", 88, -0.68, 190],
+      ["252420", "KBSTAR 200 Futures Inverse 2X", "KBSTAR 200 Futures Inverse 2X", "KOSPI", 89, -0.65, 170],
+      ["291610", "KOSEF KOSDAQ150 Futures Inverse", "KOSEF KOSDAQ150 Futures Inverse", "KOSPI", 5620, -0.36, 120],
+    ],
+  },
+] as const;
+
+const seededThemeUniverse = [...themeSeed, ...additionalThemeSeed] as const;
 
 function formatClock(totalMinutes: number) {
   const hours = Math.floor(totalMinutes / 60);
@@ -508,7 +713,7 @@ function buildSeries(price: number, change: number, seed: number): Record<RangeK
 }
 
 function buildUniverse(): ThemeUniverse[] {
-  return themeSeed.map((theme) => ({
+  return seededThemeUniverse.map((theme) => ({
     ...theme,
     stocks: theme.stocks.map((row, index) => {
       const [symbol, name, localName, market, price, change, marketCap] = row;
@@ -535,7 +740,7 @@ function buildUniverse(): ThemeUniverse[] {
         marketCap: Number(marketCap),
         rank: index + 1,
         signal: numericChange >= 1 ? "Buy" : numericChange < 0 ? "Watch" : "Hold",
-        strategy: index < 3 ? "Theme rotation TOP3" : "Theme watchlist TOP10",
+        strategy: index < portfolioTargetSize ? "Theme rotation TOP5" : "Theme watchlist TOP10",
         series: buildSeries(numericPrice, numericChange, index + theme.id.length),
       };
     }),
@@ -600,7 +805,7 @@ function universeFromApi(payload: ThemeUniverseApiResponse): ThemeUniverse[] {
         marketCap: fallback.marketCap,
         rank: holding.market_cap_rank,
         signal: stockSignal(change),
-        strategy: holding.market_cap_rank <= 3 ? "API theme rotation TOP3" : "API theme TOP10",
+        strategy: holding.market_cap_rank <= portfolioTargetSize ? "API theme rotation TOP5" : "API theme TOP10",
         series: buildSeries(price, change, holding.market_cap_rank + theme.key.length),
       };
     }),
@@ -767,7 +972,13 @@ function buildBalancedPaperPositions(targetStocks: Stock[], availableCash: numbe
 
   return drafts
     .filter((draft) => draft.shares > 0)
-    .map(({ unitCost: _unitCost, unitFee: _unitFee, ...position }) => position);
+    .map((draft) => ({
+      symbol: draft.symbol,
+      shares: draft.shares,
+      entryPrice: draft.entryPrice,
+      entryValue: draft.entryValue,
+      entryFee: draft.entryFee,
+    }));
 }
 
 function formatCompactNumber(value: number | null | undefined) {
@@ -795,13 +1006,14 @@ function movingAverage(points: ChartPoint[], windowSize: number) {
   return slice.reduce((sum, point) => sum + point.close, 0) / Math.max(slice.length, 1);
 }
 
-function stockMovingAverageTrend(stock: Stock) {
-  const points = stock.series.LIVE;
-  const fast = movingAverage(points, 8);
-  const previousFast = movingAverage(points.slice(0, -4), 8);
-  const slow = movingAverage(points, 26);
-  const fastSpread = ((fast - slow) / slow) * 100;
-  const slope = ((fast - previousFast) / previousFast) * 100;
+function trendFromPoints(points: ChartPoint[], fastWindow: number, slowWindow: number, comparisonOffset: number) {
+  const fast = movingAverage(points, fastWindow);
+  const previousFast = movingAverage(points.slice(0, -comparisonOffset), fastWindow);
+  const slow = movingAverage(points, slowWindow);
+  const safeSlow = slow || 1;
+  const safePreviousFast = previousFast || fast || 1;
+  const fastSpread = ((fast - slow) / safeSlow) * 100;
+  const slope = ((fast - previousFast) / safePreviousFast) * 100;
 
   return {
     fast,
@@ -812,14 +1024,46 @@ function stockMovingAverageTrend(stock: Stock) {
   };
 }
 
-function momentumScore(stock: Stock) {
-  const trend = stockMovingAverageTrend(stock);
+function stockMovingAverageTrend(stock: Stock) {
+  return trendFromPoints(stock.series.LIVE, 8, 26, 4);
+}
 
-  return trend.rising ? trend.score + stock.change * 0.2 : trend.score * 0.35;
+function stockLongTrendScore(stock: Stock) {
+  const monthTrend = trendFromPoints(stock.series["1M"], 20, 60, 8);
+  const yearTrend = trendFromPoints(stock.series["1Y"], 20, 80, 10);
+
+  return monthTrend.score * 0.45 + yearTrend.score * 0.55;
+}
+
+function momentumScore(stock: Stock) {
+  const shortTrend = stockMovingAverageTrend(stock);
+  const shortScore = shortTrend.rising ? shortTrend.score : shortTrend.score * 0.35;
+  const longScore = stockLongTrendScore(stock);
+
+  return shortScore + longScore * 0.65 + stock.change * 0.15;
 }
 
 function themeMomentum(theme: ThemeUniverse) {
   return theme.stocks.slice(0, 10).reduce((sum, stock) => sum + momentumScore(stock), 0) / 10;
+}
+
+function isStockMovingAverageBroken(stock: Stock) {
+  const trend = stockMovingAverageTrend(stock);
+  const fastBelowSlow = trend.fast < trend.slow * (1 - maRolloverSpreadBuffer * 0.5);
+  const fastTurnedDown = trend.fast < trend.previousFast * (1 - maRolloverSlopeBuffer * 0.5);
+
+  return fastBelowSlow || (fastTurnedDown && trend.score < 0);
+}
+
+function isThemeUptrend(theme: ThemeUniverse) {
+  const leaders = theme.stocks.slice(0, portfolioTargetSize);
+  const risingLeaders = leaders.filter((stock) => {
+    const shortTrend = stockMovingAverageTrend(stock);
+
+    return shortTrend.rising && stockLongTrendScore(stock) > 0;
+  }).length;
+
+  return themeMomentum(theme) > minThemeMomentumForEntry && risingLeaders >= Math.ceil(leaders.length * 0.6);
 }
 
 function isMovingAverageRollingOver(theme: ThemeUniverse) {
@@ -873,7 +1117,7 @@ function buildPath(
 ) {
   return points
     .map((point, index) => {
-      const x = xFor(index, points.length, width, 60, 26);
+      const x = xFor(index, points.length, width, chartPaddingLeft, chartPaddingRight);
       const y = yFor(point.value, min, max, height, paddingTop, paddingBottom);
       return `${index === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
     })
@@ -898,7 +1142,7 @@ function movingAveragePath(
     .map((point, index) => {
       const windowPoints = points.slice(Math.max(0, index - period + 1), index + 1);
       const average = windowPoints.reduce((sum, item) => sum + item.close, 0) / windowPoints.length;
-      const x = xFor(index, points.length, width, 60, 26);
+      const x = xFor(index, points.length, width, chartPaddingLeft, chartPaddingRight);
       const y = yFor(average, min, max, height, paddingTop, paddingBottom);
 
       return `${index === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
@@ -1031,6 +1275,7 @@ export default function StockDashboard() {
   const [cash, setCash] = useState(defaultPaperCash);
   const [positions, setPositions] = useState<Position[]>([]);
   const [tradeLog, setTradeLog] = useState<string[]>([`Ready: ${defaultPaperCash.toLocaleString("en-US")} KRW paper account`]);
+  const [sidecarAlert, setSidecarAlert] = useState("");
   const [tick, setTick] = useState(0);
   const [activeNav, setActiveNav] = useState("home");
   const [statusMessage, setStatusMessage] = useState("자동 전략 대기 중");
@@ -1042,7 +1287,7 @@ export default function StockDashboard() {
     () => [...marketThemes].sort((a, b) => themeMomentum(b) - themeMomentum(a))[0],
     [marketThemes],
   );
-  const targetStocks = useMemo(() => activeTheme?.stocks.slice(0, 3) ?? [], [activeTheme]);
+  const targetStocks = useMemo(() => activeTheme?.stocks.slice(0, portfolioTargetSize) ?? [], [activeTheme]);
   const marketStocks = useMemo(
     () => marketThemes.flatMap((theme) => theme.stocks).sort((a, b) => b.marketCap - a.marketCap),
     [marketThemes],
@@ -1098,6 +1343,7 @@ export default function StockDashboard() {
         const response = await fetch(`${apiBaseUrl}/universe/themes`, { signal: controller.signal });
 
         if (!response.ok) {
+          setStatusMessage("테마 API 연결 실패, 샘플 유니버스 유지");
           return;
         }
 
@@ -1111,6 +1357,10 @@ export default function StockDashboard() {
         setUniverses(nextUniverses);
         setStatusMessage("테마/시총 TOP10 갱신 완료");
       } catch {
+        if (!controller.signal.aborted) {
+          setStatusMessage("테마 API 연결 실패, 샘플 유니버스 유지");
+        }
+
         return;
       }
     }
@@ -1228,16 +1478,28 @@ export default function StockDashboard() {
         const stock = stocks.find((item) => item.symbol === position.symbol);
         return sum + liquidationValue(position, stock);
       }, cash);
+      const positionsEntryValue = positions.reduce((sum, position) => sum + position.entryValue, 0);
+      const positionsLiquidationValue = Math.max(0, portfolioValue - cash);
       const lossTriggered = positions.some((position) => {
         const stock = stocks.find((item) => item.symbol === position.symbol);
-        return stock ? liquidationValue(position, stock) <= position.entryValue * 0.98 : false;
+        return stock ? liquidationValue(position, stock) <= position.entryValue * (1 - positionStopLossRate) : false;
       });
+      const sidecarTriggered =
+        positions.length > 0 &&
+        positionsEntryValue > 0 &&
+        positionsLiquidationValue <= positionsEntryValue * (1 - sidecarDrawdownRate);
       const tradingDaySeconds = 390 * 60;
       const closeWindowSeconds = 5 * 60;
       const isCloseWindow = tick % tradingDaySeconds >= tradingDaySeconds - closeWindowSeconds;
       const maRollingOver = isMovingAverageRollingOver(activeTheme);
-      const shouldExit = lossTriggered || maRollingOver || isCloseWindow;
-      const canEnter = !maRollingOver && !isCloseWindow;
+      const heldStockMaBroken = positions.some((position) => {
+        const stock = stocks.find((item) => item.symbol === position.symbol);
+
+        return stock ? isStockMovingAverageBroken(stock) : false;
+      });
+      const activeThemeUptrend = isThemeUptrend(activeTheme);
+      const shouldExit = sidecarTriggered || lossTriggered || heldStockMaBroken || maRollingOver || isCloseWindow;
+      const canEnter = activeThemeUptrend && !maRollingOver && !isCloseWindow;
       const currentSymbols = positions.map((position) => position.symbol).sort().join(",");
       const targetSymbols = targetStocks.map((stock) => stock.symbol).sort().join(",");
 
@@ -1246,11 +1508,36 @@ export default function StockDashboard() {
         setPositions([]);
         setTradeLog((log) => [
           `${new Date().toLocaleTimeString("ko-KR")} SELL ${
-            lossTriggered ? "stop-loss" : isCloseWindow ? "pre-close" : maRollingOver ? "MA rollover" : "rotation"
+            sidecarTriggered
+              ? "sidecar"
+              : lossTriggered
+                ? "stop-loss"
+                : heldStockMaBroken
+                  ? "holding MA break"
+                  : isCloseWindow
+                    ? "pre-close"
+                    : maRollingOver
+                      ? "theme MA rollover"
+                      : "rotation"
           } ${formatMoney(portfolioValue)} net of fees`,
           ...log.slice(0, 5),
         ]);
-        setStatusMessage(lossTriggered ? "2% 손절 매도 실행" : isCloseWindow ? "장마감 5분 전 청산" : "이동평균 꺾임 매도");
+        if (sidecarTriggered) {
+          const message = `사이드카: 보유금액 5% 이상 손실 감지, 전량 매도 ${formatMoney(portfolioValue)}`;
+
+          setSidecarAlert(message);
+          setStatusMessage(message);
+        } else {
+          setStatusMessage(
+            lossTriggered
+              ? "2% 손절 매도 실행"
+              : heldStockMaBroken
+                ? "보유 종목 MA 꺾임 매도"
+                : isCloseWindow
+                  ? "장마감 5분 전 청산"
+                  : "테마 이동평균 꺾임 매도",
+          );
+        }
         return;
       }
 
@@ -1259,24 +1546,31 @@ export default function StockDashboard() {
         const investedCash = nextPositions.reduce((sum, position) => sum + position.entryValue, 0);
 
         if (!nextPositions.length) {
-          setStatusMessage("배정 현금으로 1주 이상 매수 가능한 TOP3 종목이 없습니다");
+          setStatusMessage("배정 현금으로 1주 이상 매수 가능한 TOP5 종목이 없습니다");
           return;
         }
 
         setCash(Math.max(0, cash - investedCash));
         setPositions(nextPositions);
+        setSidecarAlert("");
         setTradeLog((log) => [
-          `${new Date().toLocaleTimeString("ko-KR")} BUY ${themeName(activeTheme, language)} TOP3 fee ${formatMoney(
+          `${new Date().toLocaleTimeString("ko-KR")} BUY ${themeName(activeTheme, language)} TOP5 fee ${formatMoney(
             nextPositions.reduce((sum, position) => sum + position.entryFee, 0),
           )}`,
           ...log.slice(0, 5),
         ]);
-        setStatusMessage(`${themeName(activeTheme, language)} TOP3 자동 진입`);
+        setStatusMessage(`${themeName(activeTheme, language)} TOP5 자동 진입`);
         return;
       }
 
       if (!positions.length && cash > 1000 && !canEnter) {
-        setStatusMessage(maRollingOver ? "이동평균 회복 대기 중" : "장마감 5분 전 신규 진입 중지");
+        setStatusMessage(
+          !activeThemeUptrend
+            ? "1위 테마가 상승 추세가 아니라 신규 매수 대기"
+            : maRollingOver
+              ? "이동평균 회복 대기 중"
+              : "장마감 5분 전 신규 진입 중지",
+        );
       }
     }, 0);
 
@@ -1320,16 +1614,8 @@ export default function StockDashboard() {
   const candleWidth = Math.max(3, Math.min(10, ((chartWidth - 86) / selectedPoints.length) * 0.55));
   const latestPoint = selectedPoints[selectedPoints.length - 1];
   const latestY = yFor(latestPoint.value, chartMin, chartMax, chartHeight, priceTop, priceBottomPadding);
-  const highestPoint = selectedPoints.reduce((best, point, index) => (point.high > best.point.high ? { point, index } : best), {
-    point: selectedPoints[0],
-    index: 0,
-  });
-  const lowestPoint = selectedPoints.reduce((best, point, index) => (point.low < best.point.low ? { point, index } : best), {
-    point: selectedPoints[0],
-    index: 0,
-  });
   const showActivePoint = activePoint !== null;
-  const activeX = xFor(selectedIndex, selectedPoints.length, chartWidth, 60, 26);
+  const activeX = xFor(selectedIndex, selectedPoints.length, chartWidth, chartPaddingLeft, chartPaddingRight);
   const activeY = yFor(selectedPoint.value, chartMin, chartMax, chartHeight, priceTop, priceBottomPadding);
   const volumeMax = Math.max(...selectedPoints.map((point) => point.volume || 1));
   const watchedStocks = watchlist
@@ -1343,6 +1629,7 @@ export default function StockDashboard() {
     const stock = stocks.find((item) => item.symbol === position.symbol);
     return sum + liquidationValue(position, stock);
   }, cash);
+  const activeThemeIsUptrend = activeTheme ? isThemeUptrend(activeTheme) : false;
   const pnl = accountValue - paperInitialCash;
   const pnlRate = (pnl / paperInitialCash) * 100;
   const dataModeLabel =
@@ -1363,8 +1650,8 @@ export default function StockDashboard() {
     {
       label: activeTheme ? themeName(activeTheme, language) : "-",
       value: `${(activeTheme ? themeMomentum(activeTheme) : 0).toFixed(2)} MA`,
-      change: t.activeTheme,
-      positive: true,
+      change: activeThemeIsUptrend ? "UPTREND" : "WAIT",
+      positive: activeThemeIsUptrend,
     },
     {
       label: t.accountValue,
@@ -1375,12 +1662,6 @@ export default function StockDashboard() {
   ];
   const navItems = [
     { id: "home", label: t.home, icon: Home },
-    { id: "portfolio", label: t.portfolio, icon: Briefcase },
-    { id: "signals", label: t.signals, icon: BarChart3 },
-    { id: "automation", label: t.automation, icon: Zap },
-    { id: "backtest", label: t.backtest, icon: LineChart },
-    { id: "reports", label: t.reports, icon: FileText },
-    { id: "settings", label: t.settings, icon: Settings },
   ];
 
   function selectMarket(nextScope: MarketScope) {
@@ -1408,6 +1689,7 @@ export default function StockDashboard() {
     setPaperCashInput(String(nextInitialCash));
     setCash(nextInitialCash);
     setPositions([]);
+    setSidecarAlert("");
     setTradeLog([`Reset: ${nextInitialCash.toLocaleString("en-US")} KRW paper account`]);
     setStatusMessage(`모의 계좌를 ${formatMoney(nextInitialCash)}으로 초기화`);
   }
@@ -1514,8 +1796,7 @@ export default function StockDashboard() {
               type="button"
               aria-label="Settings"
               onClick={() => {
-                setActiveNav("settings");
-                setStatusMessage("설정: 1초 갱신 / 모의투자 / 2% 손절");
+                setStatusMessage("설정: 1초 갱신 / TOP5 모의투자 / 2% 손절 / 5% 사이드카");
               }}
             >
               <Settings size={18} />
@@ -1735,8 +2016,8 @@ export default function StockDashboard() {
 
                   return (
                     <g key={tickValue.toFixed(2)}>
-                      <line className={styles.gridLine} x1={60} x2={chartWidth - 26} y1={y} y2={y} />
-                      <text className={styles.axisLabel} textAnchor="end" x={chartWidth - 8} y={y + 4}>
+                      <line className={styles.gridLine} x1={chartPaddingLeft} x2={chartWidth - chartPaddingRight} y1={y} y2={y} />
+                      <text className={styles.axisLabel} textAnchor="end" x={chartWidth - 10} y={y + 4}>
                         {selectedStock.currency === "KRW" ? Math.round(tickValue).toLocaleString("ko-KR") : tickValue.toFixed(2)}
                       </text>
                     </g>
@@ -1749,7 +2030,7 @@ export default function StockDashboard() {
                   <text x="96" y="16">120</text>
                 </g>
                 {xAxisIndexes.map((index) => {
-                  const x = xFor(index, selectedPoints.length, chartWidth, 60, 26);
+                  const x = xFor(index, selectedPoints.length, chartWidth, chartPaddingLeft, chartPaddingRight);
 
                   return (
                     <g key={`${range}-${index}`}>
@@ -1762,7 +2043,7 @@ export default function StockDashboard() {
                 })}
                 <g className={styles.volumeLayer}>
                   {selectedPoints.map((point, index) => {
-                    const x = xFor(index, selectedPoints.length, chartWidth, 60, 26);
+                    const x = xFor(index, selectedPoints.length, chartWidth, chartPaddingLeft, chartPaddingRight);
                     const height = ((point.volume || 0) / volumeMax) * volumePaneHeight;
 
                     return (
@@ -1781,14 +2062,14 @@ export default function StockDashboard() {
                   <>
                     <path
                       className={styles.areaPath}
-                      d={`${path} L ${chartWidth - 26} ${priceBottomY} L 60 ${priceBottomY} Z`}
+                      d={`${path} L ${chartWidth - chartPaddingRight} ${priceBottomY} L ${chartPaddingLeft} ${priceBottomY} Z`}
                     />
                     <path className={styles.pricePath} d={path} />
                   </>
                 ) : (
                   <g className={styles.candleLayer}>
                     {selectedPoints.map((point, index) => {
-                      const x = xFor(index, selectedPoints.length, chartWidth, 60, 26);
+                      const x = xFor(index, selectedPoints.length, chartWidth, chartPaddingLeft, chartPaddingRight);
                       const openY = yFor(point.open, chartMin, chartMax, chartHeight, priceTop, priceBottomPadding);
                       const closeY = yFor(point.close, chartMin, chartMax, chartHeight, priceTop, priceBottomPadding);
                       const highY = yFor(point.high, chartMin, chartMax, chartHeight, priceTop, priceBottomPadding);
@@ -1810,24 +2091,8 @@ export default function StockDashboard() {
                 {ma60Path ? <path className={styles.ma60Path} d={ma60Path} /> : null}
                 {ma20Path ? <path className={styles.ma20Path} d={ma20Path} /> : null}
                 {ma5Path ? <path className={styles.ma5Path} d={ma5Path} /> : null}
-                <g className={styles.extremeLabels}>
-                  <text
-                    textAnchor="middle"
-                    x={xFor(highestPoint.index, selectedPoints.length, chartWidth, 60, 26)}
-                    y={Math.max(14, yFor(highestPoint.point.high, chartMin, chartMax, chartHeight, priceTop, priceBottomPadding) - 10)}
-                  >
-                    최고 {selectedStock.currency === "KRW" ? Math.round(highestPoint.point.high).toLocaleString("ko-KR") : highestPoint.point.high.toFixed(2)}
-                  </text>
-                  <text
-                    textAnchor="middle"
-                    x={xFor(lowestPoint.index, selectedPoints.length, chartWidth, 60, 26)}
-                    y={Math.min(priceBottomY - 8, yFor(lowestPoint.point.low, chartMin, chartMax, chartHeight, priceTop, priceBottomPadding) + 18)}
-                  >
-                    최저 {selectedStock.currency === "KRW" ? Math.round(lowestPoint.point.low).toLocaleString("ko-KR") : lowestPoint.point.low.toFixed(2)}
-                  </text>
-                </g>
-                <line className={styles.volumeDivider} x1={60} x2={chartWidth - 26} y1={volumeTopY - 8} y2={volumeTopY - 8} />
-                <line className={styles.currentPriceLine} x1={60} x2={chartWidth - 26} y1={latestY} y2={latestY} />
+                <line className={styles.volumeDivider} x1={chartPaddingLeft} x2={chartWidth - chartPaddingRight} y1={volumeTopY - 8} y2={volumeTopY - 8} />
+                <line className={styles.currentPriceLine} x1={chartPaddingLeft} x2={chartWidth - chartPaddingRight} y1={latestY} y2={latestY} />
                 {showActivePoint ? (
                   <>
                     <line className={styles.activeLine} x1={activeX} x2={activeX} y1={priceTop} y2={priceBottomY} />
@@ -1836,7 +2101,10 @@ export default function StockDashboard() {
                 ) : null}
               </svg>
               {showActivePoint ? (
-                <div className={styles.chartTooltip} style={{ left: `${(activeX / chartWidth) * 100}%` }}>
+                <div
+                  className={styles.chartTooltip}
+                  style={{ left: `${Math.min(88, Math.max(12, (activeX / chartWidth) * 100))}%` }}
+                >
                   <span>{formatChartPointLabel(selectedPoint, range, language)}</span>
                   <strong>{selectedStock.currency === "KRW" ? formatMoney(selectedPoint.value) : formatMoney(selectedPoint.value, "USD")}</strong>
                   <small>O {selectedPoint.open.toFixed(selectedStock.currency === "KRW" ? 0 : 2)} / C {selectedPoint.close.toFixed(selectedStock.currency === "KRW" ? 0 : 2)}</small>
@@ -1946,11 +2214,18 @@ export default function StockDashboard() {
                   {t.reset}
                 </button>
               </div>
+              {sidecarAlert ? (
+                <div className={styles.sidecarAlert} data-testid="sidecar-alert">
+                  <Bell size={15} />
+                  <span>{sidecarAlert}</span>
+                </div>
+              ) : null}
               <div className={styles.ruleList}>
                 <span>MA 이탈: 괴리 0.4% + 하락 0.25% + 약세 7/10</span>
                 <span>{t.activeTheme}: {activeTheme ? themeName(activeTheme, language) : "-"}</span>
+                <span>1위 테마 상승추세: {activeThemeIsUptrend ? "통과" : "대기"}</span>
                 <span>{tradingMarketLabel}</span>
-                <span>TOP3 고르게 분산 · 정수 1주 단위</span>
+                <span>TOP5 고르게 분산 · 정수 1주 단위</span>
                 <span>{t.stopLoss}</span>
                 <span>거래비용 {tradingCostText}</span>
                 <span>{t.exitRule}</span>
@@ -1960,14 +2235,36 @@ export default function StockDashboard() {
                   positions.map((position) => {
                     const stock = stocks.find((item) => item.symbol === position.symbol);
                     const value = liquidationValue(position, stock);
+                    const positionPnl = value - position.entryValue;
 
                     return (
-                      <div key={position.symbol}>
-                        <strong>{position.symbol}</strong>
+                      <button
+                        className={styles.positionRow}
+                        key={position.symbol}
+                        type="button"
+                        onClick={() => {
+                          if (!stock) {
+                            return;
+                          }
+
+                          setMarketScope(stock.region);
+                          setSelectedSymbol(stock.symbol);
+                          setActivePoint(null);
+                          setStatusMessage(`${stockName(stock, language)} 보유 종목 차트 확인`);
+                        }}
+                      >
+                        <strong>
+                          {position.symbol}
+                          <small>{stock ? stockName(stock, language) : "Unknown"}</small>
+                        </strong>
                         <span>
                           {position.shares.toLocaleString("ko-KR")}주 · {formatMoney(value)}
+                          <small className={positionPnl >= 0 ? styles.positive : styles.negative}>
+                            {positionPnl >= 0 ? "+" : ""}
+                            {formatMoney(positionPnl)}
+                          </small>
                         </span>
-                      </div>
+                      </button>
                     );
                   })
                 ) : (

@@ -55,14 +55,17 @@ automated trading assistant.
   simulation work, upserts `market_quote_latest`, and appends
   `market_quote_history` so the service keeps data current even when the frontend is not open.
 - Frontend development is served on `http://localhost:3001` for this app.
-- `GET /universe/themes` returns curated theme/sector groups and top market-cap top 10 metadata.
+- `GET /universe/themes` returns curated theme/sector groups and top market-cap top 10 metadata,
+  including quantum computing, power/grid, data centers, nuclear, robotics/humanoids, defense,
+  aerospace/space, biotech, blockchain, US inverse ETFs, and Korea inverse ETFs.
 - The frontend dashboard now includes a denser brokerage-style candlestick chart, 1-second simulated
   ticks, a configurable paper-trading account defaulting to 100,000,000 KRW with reset, and a
   theme-rotation automation panel.
 - The dashboard stock list is grouped by theme, supports domestic/overseas paper-trading views, and
   falls back to seeded historical candles when very short realtime buffers would make the chart flat.
 - The main chart uses a classic brokerage-style candlestick view with 5/20/60/120 moving averages,
-  high/low labels, right-side price ticks, volume bars, and realtime quote scaling over stable history.
+  right-side price ticks, volume bars, and realtime quote scaling over stable history. Intrusive
+  high/low SVG text labels were removed so labels no longer collide with candles.
 - Chart x-axis labels use deterministic date/time formatting: intraday ranges show month/day and
   hour/minute, mid ranges include short year/month/day and hour/minute, and long ranges show dates.
 - Chart ranges separate live market hours from 1-day history: `LIVE` renders the regular trading
@@ -75,9 +78,14 @@ automated trading assistant.
 - The paper-trading simulation uses Korea Investment Securities fee assumptions: BanKIS domestic
   online KRX commission at 0.0140527%, and US online overseas trading at 0.25% buy / 0.25206% sell
   including the US SEC sell fee.
-- Paper-trading orders allocate the configured account balance across the target top 3, buy only
+- Paper-trading orders allocate the configured account balance across the target top 5, buy only
   whole shares, and reuse leftover cash to add shares to the lowest-invested target so the portfolio
   stays as evenly distributed as whole-share constraints allow.
+- The rotation strategy only enters when the top-ranked theme is in an uptrend, using a composite
+  short-term and long-term MA momentum score. It exits on 2% per-position stop loss, held-stock MA
+  break, theme MA rollover, near-close liquidation, or a 5% portfolio holding drawdown sidecar.
+- The sidebar navigation is intentionally reduced to Home only. Held positions show symbol, company
+  name, shares, value, and P/L, and clicking a position focuses its chart.
 - The dashboard has a theme/universe refresh button that refetches `/universe/themes` so market-cap
   top lists can be refreshed without reloading the app.
 - The automation guardrails reduce churn through stricter theme MA rollover confirmation instead of

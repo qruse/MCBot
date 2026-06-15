@@ -1334,6 +1334,7 @@ export default function StockDashboard() {
     stocks.find((stock) => stock.symbol === selectedSymbol && stock.region === marketScope) ??
     marketStocks[0] ??
     stocks[0];
+  const selectedStockSymbol = selectedStock.symbol;
 
   useEffect(() => {
     const controller = new AbortController();
@@ -1351,6 +1352,7 @@ export default function StockDashboard() {
         const nextUniverses = universeFromApi(payload);
 
         if (!nextUniverses.length) {
+          setStatusMessage("테마 API 응답 없음, 샘플 유니버스 유지");
           return;
         }
 
@@ -1422,7 +1424,7 @@ export default function StockDashboard() {
   }, [refreshKey]);
 
   useEffect(() => {
-    if (!selectedStock) {
+    if (!selectedStockSymbol) {
       return;
     }
 
@@ -1430,7 +1432,7 @@ export default function StockDashboard() {
 
     async function loadChartHistory() {
       try {
-        const response = await fetch(`${apiBaseUrl}/quotes/kis/history/${selectedStock.symbol}?range=${range}`, {
+        const response = await fetch(`${apiBaseUrl}/quotes/kis/history/${selectedStockSymbol}?range=${range}`, {
           signal: controller.signal,
         });
 
@@ -1447,8 +1449,8 @@ export default function StockDashboard() {
 
         setChartHistory((currentHistory) => ({
           ...currentHistory,
-          [selectedStock.symbol]: {
-            ...currentHistory[selectedStock.symbol],
+          [selectedStockSymbol]: {
+            ...currentHistory[selectedStockSymbol],
             [range]: points,
           },
         }));
@@ -1466,7 +1468,7 @@ export default function StockDashboard() {
         window.clearInterval(intervalId);
       }
     };
-  }, [range, selectedStock]);
+  }, [range, selectedStockSymbol]);
 
   useEffect(() => {
     if (!autoRun || !activeTheme || !targetStocks.length) {
@@ -1956,7 +1958,7 @@ export default function StockDashboard() {
             </div>
             <div className={styles.sourceMeta}>
               <span>{selectedStock.source ?? "Sample + 1s simulation"}</span>
-              <span>{chartSourceLabel}</span>
+              <span data-testid="chart-source-label">{chartSourceLabel}</span>
               <span>
                 {t.updated} {formatFetchedAt(selectedStock.fetchedAt ?? latestFetchedAt, language)}
               </span>

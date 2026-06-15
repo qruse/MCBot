@@ -17,7 +17,8 @@ automated trading assistant.
 - `backend/app/database.py`: MongoDB client helpers, database/collection accessors, and ping
   health check using `MONGO_URI`
 - `backend/app/kis.py`: Korea Investment Securities Open API client for the live quote watchlist
-  (`NVDA`, `MU`, `SNDK`, `005930`, `000660`) with token, quote, and historical chart caching
+  (`NVDA`, `MU`, `SNDK`, `005930`, `000660`) with token, quote, historical chart caching, and
+  Yahoo Finance chart-download fallback for broader theme and ETF history
 - `backend/app/market_data.py`: background 10-second KIS quote refresh scheduler, MongoDB latest
   quote persistence, quote history persistence, intraday chart aggregation, and latest-or-refresh
   API helper
@@ -49,7 +50,10 @@ automated trading assistant.
 - `GET /quotes/kis/watchlist` returns the focused live quote list for NVIDIA, Micron, Sandisk,
   Samsung Electronics, and SK Hynix.
 - `GET /quotes/kis/history/{symbol}?range=LIVE|1D|1W|1M|1Y|5Y|ALL` returns chart-ready OHLC
-  candles. `LIVE`/`1D` use Mongo scheduled KIS quote history; longer ranges use KIS chart data.
+  candles. `LIVE` uses Mongo scheduled KIS quote history. `1D` uses Mongo when enough intraday
+  history exists, otherwise downloads 30-minute Yahoo chart candles. Longer ranges use KIS chart
+  data first, then Yahoo Finance chart-download fallback for theme-universe symbols and inverse
+  ETFs that KIS cannot serve.
 - FastAPI startup launches a background market data scheduler. It refreshes KIS watchlist quotes
   every `MARKET_DATA_REFRESH_SECONDS` seconds, defaulting to 1 second for first-pass trading
   simulation work, upserts `market_quote_latest`, and appends
@@ -74,7 +78,8 @@ automated trading assistant.
   24-hour candle count fixed and updates only the active final candle's OHLC/volume.
 - Frontend charts now prefer real `/quotes/kis/history` candles when enough history is available,
   show the chart source and candle count, and only use the seeded sample series as an explicit
-  fallback when stored KIS history is still too sparse.
+  fallback when stored/downloaded history is still too sparse. The chart source label has a stable
+  `chart-source-label` test id so e2e can verify downloaded history instead of sample candles.
 - The paper-trading simulation uses Korea Investment Securities fee assumptions: BanKIS domestic
   online KRX commission at 0.0140527%, and US online overseas trading at 0.25% buy / 0.25206% sell
   including the US SEC sell fee.

@@ -2,6 +2,100 @@
 
 test("brokerage dashboard controls work", async ({ page }) => {
   const consoleIssues: string[] = [];
+  const ionqDownloadedHistory = {
+    source: "Yahoo Finance chart download",
+    environment: "paper",
+    symbol: "IONQ",
+    range: "1M",
+    interval: "daily",
+    count: 3,
+    data: [
+      {
+        symbol: "IONQ",
+        timestamp: "2026-06-10T00:00:00Z",
+        open: 41.2,
+        high: 42.9,
+        low: 40.5,
+        close: 42.1,
+        volume: 12500000,
+        source: "Yahoo Finance chart download",
+      },
+      {
+        symbol: "IONQ",
+        timestamp: "2026-06-11T00:00:00Z",
+        open: 42.1,
+        high: 44.2,
+        low: 41.7,
+        close: 43.8,
+        volume: 13900000,
+        source: "Yahoo Finance chart download",
+      },
+      {
+        symbol: "IONQ",
+        timestamp: "2026-06-12T00:00:00Z",
+        open: 43.8,
+        high: 45.6,
+        low: 43.2,
+        close: 45.1,
+        volume: 14600000,
+        source: "Yahoo Finance chart download",
+      },
+    ],
+    errors: [],
+  };
+
+  await page.route(/\/universe\/themes$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        source: "e2e empty theme fixture",
+        count: 0,
+        themes: [],
+        notes: [],
+      }),
+    });
+  });
+
+  await page.route(/\/quotes\/kis\/watchlist$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        source: "e2e quote fixture",
+        environment: "paper",
+        count: 0,
+        data: [],
+        errors: [],
+      }),
+    });
+  });
+
+  await page.route(/\/quotes\/kis\/history\//, async (route) => {
+    const requestUrl = new URL(route.request().url());
+    const pathParts = requestUrl.pathname.split("/");
+    const symbol = pathParts[pathParts.length - 1];
+    const range = requestUrl.searchParams.get("range");
+
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(
+        symbol === "IONQ" && range === "1M"
+          ? ionqDownloadedHistory
+          : {
+              source: "e2e empty chart fixture",
+              environment: "paper",
+              symbol,
+              range,
+              interval: "fixture",
+              count: 0,
+              data: [],
+              errors: [],
+            },
+      ),
+    });
+  });
 
   page.on("console", (message) => {
     if (["error", "warning"].includes(message.type())) {
@@ -27,7 +121,7 @@ test("brokerage dashboard controls work", async ({ page }) => {
   await expect(page.locator('svg[class*="themeSparkline"]')).toHaveCount(3);
   await expect(page.locator('button[class*="stockThemeHeader"]').first()).toBeVisible();
   await expect(page.locator('line[class*="volumeDivider"]')).toHaveCount(1);
-  await expect(page.getByText(/candles/).first()).toBeVisible();
+  await expect(page.getByTestId("chart-source-label")).toContainText(/candles/);
   await expect(page.locator('div[class*="chartCanvas"]')).toHaveCSS("background-color", "rgb(10, 16, 24)");
   await expect(page.locator('text[class*="axisLabel"]').filter({ hasText: /\d{2}\/\d{2}\s\d{2}:\d{2}/ }).first()).toBeVisible();
   await page.getByTestId("range-1D").click();
@@ -51,6 +145,11 @@ test("brokerage dashboard controls work", async ({ page }) => {
   await expect(page.getByText(/FX 1,380/).first()).toBeVisible();
   await expect(page.getByText(/미국 매수 0.250%/).first()).toBeVisible();
   await expect(page.getByText(/매도 0.252%/).first()).toBeVisible();
+
+  await page.locator('input[placeholder]').fill("IONQ");
+  await page.getByRole("button", { name: /IONQ/ }).first().click();
+  await page.getByTestId("range-1M").click();
+  await expect(page.getByTestId("chart-source-label")).toContainText(/Yahoo Finance chart download.*3 candles/);
 
   await page.locator('input[placeholder]').fill("MSFT");
   await expect(page.getByText("MSFT").first()).toBeVisible();

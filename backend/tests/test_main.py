@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from fastapi.testclient import TestClient
 
-from app import main, market_data
+from app import kis, main, market_data
 from app.main import app
 
 
@@ -128,6 +130,95 @@ def test_read_kis_watchlist_history_live(
     assert response.status_code == 200
     assert response.json()["symbol"] == "NVDA"
     assert response.json()["data"][0]["close"] == 214.75
+
+
+def test_read_one_day_history_downloads_when_live_history_is_sparse(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_live_chart_history(
+        symbol: str,
+        range_key: kis.ChartRange,
+    ) -> kis.KisChartResponse:
+        return kis.KisChartResponse(
+            source="Mongo scheduled KIS quotes",
+            environment="paper",
+            symbol=symbol,
+            range=range_key,
+            interval="5m",
+            count=1,
+            data=[],
+            errors=[],
+        )
+
+    async def fake_downloaded_chart(symbol: str, range_key: kis.ChartRange) -> kis.KisChartResponse:
+        downloaded_data = [
+            kis.KisChartCandle(
+                symbol=symbol,
+                timestamp=f"2026-06-{day:02d}T00:00:00+00:00",
+                open=214.0,
+                high=215.0,
+                low=213.0,
+                close=214.75,
+                volume=100,
+                source=kis.YAHOO_CHART_SOURCE,
+            )
+            for day in range(5, 17)
+        ]
+
+        return kis.KisChartResponse(
+            source=kis.YAHOO_CHART_SOURCE,
+            environment="paper",
+            symbol=symbol,
+            range=range_key,
+            interval="30m",
+            count=len(downloaded_data),
+            data=downloaded_data,
+            errors=[],
+        )
+
+    monkeypatch.setattr(main, "get_live_chart_history", fake_live_chart_history)
+    monkeypatch.setattr(main, "get_watchlist_chart", fake_downloaded_chart)
+
+    response = client.get("/quotes/kis/history/NVDA?range=1D")
+
+    assert response.status_code == 200
+    assert response.json()["source"] == kis.YAHOO_CHART_SOURCE
+    assert response.json()["interval"] == "30m"
+
+
+def test_get_theme_symbol_chart_uses_downloaded_history(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    kis._chart_cache.clear()
+
+    async def fake_yahoo_chart(
+        _client: object,
+        symbol: kis.KisSymbol,
+        _range_key: kis.ChartRange,
+    ) -> list[kis.KisChartCandle]:
+        assert symbol.symbol == "IONQ"
+        return [
+            kis.KisChartCandle(
+                symbol=symbol.symbol,
+                timestamp="2026-06-05T00:00:00+00:00",
+                open=43.0,
+                high=44.0,
+                low=42.5,
+                close=43.75,
+                volume=1000,
+                source=kis.YAHOO_CHART_SOURCE,
+            )
+        ]
+
+    monkeypatch.setattr(kis, "_fetch_yahoo_chart", fake_yahoo_chart)
+
+    response = asyncio.run(kis.get_watchlist_chart("IONQ", "1M"))
+
+    assert response.source == kis.YAHOO_CHART_SOURCE
+    assert response.interval == "daily"
+    assert response.count == 1
+    assert response.data[0].source == kis.YAHOO_CHART_SOURCE
 
 
 def test_read_theme_universe(client: TestClient) -> None:

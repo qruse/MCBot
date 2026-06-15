@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import os
 import time
 from datetime import UTC, date, datetime, timedelta
@@ -20,6 +21,8 @@ KIS_PAPER_BASE_URL = "https://openapivts.koreainvestment.com:29443"
 KIS_QUOTE_CACHE_TTL_SECONDS = 10
 KIS_PAPER_CALL_INTERVAL_SECONDS = 1.05
 KIS_REAL_CALL_INTERVAL_SECONDS = 0.12
+YAHOO_CHART_BASE_URL = "https://query1.finance.yahoo.com/v8/finance/chart"
+YAHOO_CHART_SOURCE = "Yahoo Finance chart download"
 
 
 class KisSymbol(BaseModel):
@@ -221,6 +224,80 @@ def _watchlist_symbol(symbol_code: str) -> KisSymbol:
             return symbol
 
     raise KisServiceError(f"{symbol_code}: unsupported watchlist symbol.", status_code=404)
+
+
+def _universe_symbol(symbol_code: str) -> KisSymbol | None:
+    normalized_symbol = symbol_code.strip().upper()
+
+    try:
+        from app.universe import get_theme_universe
+    except Exception:
+        return None
+
+    for theme in get_theme_universe().themes:
+        for holding in theme.top_market_cap:
+            if holding.symbol.upper() == normalized_symbol:
+                exchange_code = None
+                if holding.region == "overseas":
+                    exchange_code = {
+                        "NASDAQ": "NAS",
+                        "NYSE": "NYS",
+                        "NYSEARCA": "AMS",
+                        "NYSEAMERICAN": "AMS",
+                        "BATS": "AMS",
+                    }.get(holding.market.upper())
+
+                return KisSymbol(
+                    symbol=holding.symbol.upper(),
+                    name=holding.name,
+                    local_name=holding.local_name,
+                    market=holding.market,
+                    region=holding.region,
+                    currency=holding.currency,
+                    sector=holding.sector,
+                    sector_ko=holding.sector_ko,
+                    exchange_code=exchange_code,
+                )
+
+    return None
+
+
+def _chart_symbol(symbol_code: str) -> KisSymbol:
+    normalized_symbol = symbol_code.strip().upper()
+
+    for symbol in WATCHLIST_SYMBOLS:
+        if symbol.symbol == normalized_symbol:
+            return symbol
+
+    if symbol := _universe_symbol(normalized_symbol):
+        return symbol
+
+    if normalized_symbol.isdigit() and len(normalized_symbol) == 6:
+        return KisSymbol(
+            symbol=normalized_symbol,
+            name=normalized_symbol,
+            local_name=normalized_symbol,
+            market="KOSPI",
+            region="domestic",
+            currency="KRW",
+            sector="Unknown",
+            sector_ko="Unknown",
+        )
+
+    return KisSymbol(
+        symbol=normalized_symbol,
+        name=normalized_symbol,
+        local_name=normalized_symbol,
+        market="US",
+        region="overseas",
+        currency="USD",
+        sector="Unknown",
+        sector_ko="Unknown",
+    )
+
+
+def _is_watchlist_symbol(symbol: KisSymbol) -> bool:
+    return any(item.symbol == symbol.symbol for item in WATCHLIST_SYMBOLS)
 
 
 async def _access_token_for(client: httpx.AsyncClient) -> str:
@@ -460,6 +537,152 @@ def _dedupe_and_sort_candles(
     return sorted(filtered, key=lambda candle: candle.timestamp)
 
 
+def _download_start_date(range_key: ChartRange) -> date:
+    if range_key == "1D":
+        return datetime.now(tz=UTC).date() - timedelta(days=7)
+
+    return _chart_start_date(range_key)
+
+
+def _minimum_chart_points(range_key: ChartRange) -> int:
+    return {
+        "LIVE": 2,
+        "1D": 12,
+        "1W": 5,
+        "1M": 10,
+        "1Y": 100,
+        "5Y": 80,
+        "ALL": 60,
+    }[range_key]
+
+
+def _yahoo_symbol(symbol: KisSymbol) -> str:
+    if symbol.region == "overseas":
+        return symbol.symbol.replace(".", "-")
+
+    suffix = ".KQ" if symbol.market.upper() == "KOSDAQ" else ".KS"
+    return f"{symbol.symbol}{suffix}"
+
+
+def _yahoo_range_and_interval(range_key: ChartRange) -> tuple[str, str, str]:
+    if range_key in {"LIVE", "1D"}:
+        return "5d", "30m", "30m"
+
+    if range_key == "1W":
+        return "1mo", "1d", "daily"
+
+    if range_key == "1M":
+        return "3mo", "1d", "daily"
+
+    if range_key == "1Y":
+        return "1y", "1d", "daily"
+
+    if range_key == "5Y":
+        return "5y", "1wk", "weekly"
+
+    return "10y", "1mo", "monthly"
+
+
+def _finite_price(value: Any) -> float | None:
+    if value is None:
+        return None
+
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+
+    return number if math.isfinite(number) and number > 0 else None
+
+
+def _yahoo_candles_from_payload(
+    symbol: KisSymbol,
+    range_key: ChartRange,
+    payload: dict[str, Any],
+) -> list[KisChartCandle]:
+    chart = payload.get("chart") or {}
+    errors = chart.get("error")
+    if errors:
+        raise KisServiceError(f"{symbol.symbol}: Yahoo chart error: {errors}", status_code=502)
+
+    results = chart.get("result") or []
+    if not results:
+        return []
+
+    result = results[0]
+    timestamps = result.get("timestamp") or []
+    quote = ((result.get("indicators") or {}).get("quote") or [{}])[0]
+    opens = quote.get("open") or []
+    highs = quote.get("high") or []
+    lows = quote.get("low") or []
+    closes = quote.get("close") or []
+    volumes = quote.get("volume") or []
+    start_date = _download_start_date(range_key)
+    candles: list[KisChartCandle] = []
+
+    for index, epoch_seconds in enumerate(timestamps):
+        open_price = _finite_price(opens[index] if index < len(opens) else None)
+        high_price = _finite_price(highs[index] if index < len(highs) else None)
+        low_price = _finite_price(lows[index] if index < len(lows) else None)
+        close_price = _finite_price(closes[index] if index < len(closes) else None)
+
+        if not all((open_price, high_price, low_price, close_price)):
+            continue
+
+        timestamp = datetime.fromtimestamp(int(epoch_seconds), tz=UTC)
+        if timestamp.date() < start_date:
+            continue
+
+        raw_volume = volumes[index] if index < len(volumes) else None
+        volume = int(raw_volume) if isinstance(raw_volume, int | float) else None
+
+        candles.append(
+            KisChartCandle(
+                symbol=symbol.symbol,
+                timestamp=timestamp.isoformat(),
+                open=open_price,
+                high=high_price,
+                low=low_price,
+                close=close_price,
+                volume=volume,
+                source=YAHOO_CHART_SOURCE,
+            )
+        )
+
+    return sorted(candles, key=lambda candle: candle.timestamp)
+
+
+async def _fetch_yahoo_chart(
+    client: httpx.AsyncClient,
+    symbol: KisSymbol,
+    range_key: ChartRange,
+) -> list[KisChartCandle]:
+    yahoo_range, interval, _ = _yahoo_range_and_interval(range_key)
+    response = await client.get(
+        f"{YAHOO_CHART_BASE_URL}/{_yahoo_symbol(symbol)}",
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36"
+            ),
+        },
+        params={
+            "range": yahoo_range,
+            "interval": interval,
+            "includeAdjustedClose": "true",
+            "events": "div,splits",
+        },
+    )
+
+    if response.status_code >= 400:
+        raise KisServiceError(
+            f"{symbol.symbol}: Yahoo chart request failed: HTTP {response.status_code}",
+            status_code=502,
+        )
+
+    return _yahoo_candles_from_payload(symbol, range_key, response.json())
+
+
 async def _fetch_domestic_chart(
     client: httpx.AsyncClient,
     access_token: str,
@@ -572,24 +795,49 @@ async def get_watchlist_chart(symbol_code: str, range_key: ChartRange) -> KisCha
     if cache_key in _chart_cache and now - _chart_cache[cache_key][0] < cache_ttl:
         return _chart_cache[cache_key][1]
 
-    symbol = _watchlist_symbol(symbol_code)
+    symbol = _chart_symbol(symbol_code)
+    candles: list[KisChartCandle] = []
+    source = "KIS Open API"
+    errors: list[str] = []
 
     async with httpx.AsyncClient(timeout=30) as client:
-        access_token = await _access_token_for(client)
+        if _is_watchlist_symbol(symbol):
+            try:
+                access_token = await _access_token_for(client)
 
-        if symbol.region == "domestic":
-            candles = await _fetch_domestic_chart(client, access_token, symbol, range_key)
-        else:
-            candles = await _fetch_overseas_chart(client, access_token, symbol, range_key)
+                if symbol.region == "domestic":
+                    candles = await _fetch_domestic_chart(client, access_token, symbol, range_key)
+                else:
+                    candles = await _fetch_overseas_chart(client, access_token, symbol, range_key)
+            except KisServiceError as exc:
+                errors.append(exc.message)
+
+        if len(candles) < _minimum_chart_points(range_key):
+            try:
+                downloaded_candles = await _fetch_yahoo_chart(client, symbol, range_key)
+            except KisServiceError as exc:
+                errors.append(exc.message)
+            else:
+                if downloaded_candles:
+                    candles = downloaded_candles
+                    source = YAHOO_CHART_SOURCE
+
+    if not candles and not errors:
+        errors.append(f"{symbol.symbol}: no historical candles returned.")
 
     response = KisChartResponse(
+        source=source,
         environment=_kis_environment(),
         symbol=symbol.symbol,
         range=range_key,
-        interval=_interval_label(range_key),
+        interval=(
+            _yahoo_range_and_interval(range_key)[2]
+            if source == YAHOO_CHART_SOURCE
+            else _interval_label(range_key)
+        ),
         count=len(candles),
         data=candles,
-        errors=[],
+        errors=errors,
     )
     _chart_cache[cache_key] = (time.monotonic(), response)
 

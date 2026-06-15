@@ -99,8 +99,18 @@ async def read_kis_watchlist_history(
     range_key: Annotated[ChartRange, Query(alias="range")] = "LIVE",
 ) -> KisChartResponse:
     try:
-        if range_key in {"LIVE", "1D"}:
+        if range_key == "LIVE":
             return await get_live_chart_history(symbol, range_key)
+
+        if range_key == "1D":
+            live_history = await get_live_chart_history(symbol, range_key)
+            if live_history.count >= 12:
+                return live_history
+
+            downloaded_history = await get_watchlist_chart(symbol, range_key)
+            return downloaded_history.model_copy(
+                update={"errors": [*live_history.errors, *downloaded_history.errors]}
+            )
 
         return await get_watchlist_chart(symbol, range_key)
     except KisServiceError as error:

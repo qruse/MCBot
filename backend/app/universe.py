@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
 Region = Literal["domestic", "overseas"]
+ThemeMode = Literal["core", "all"]
 
 
 class UniverseHolding(BaseModel):
@@ -32,8 +34,25 @@ class ThemeUniverse(BaseModel):
 class ThemeUniverseResponse(BaseModel):
     source: str = "MCBot curated universe"
     count: int
+    mode: ThemeMode = "core"
+    refreshed_at: str
     themes: list[ThemeUniverse]
     notes: list[str] = Field(default_factory=list)
+
+
+_CORE_THEME_KEYS = (
+    "korea-semiconductors",
+    "domestic-defense",
+    "semiconductors",
+    "ai-platforms",
+    "us-inverse-etfs",
+    "korea-inverse-etfs",
+)
+
+
+def _normalize_theme_mode(mode: str) -> ThemeMode:
+    normalized = mode.strip().lower()
+    return "all" if normalized == "all" else "core"
 
 
 THEME_UNIVERSE: tuple[ThemeUniverse, ...] = (
@@ -679,129 +698,129 @@ THEME_UNIVERSE: tuple[ThemeUniverse, ...] = (
         ],
     ),
     ThemeUniverse(
-        key="korea-batteries",
-        name="Korea Batteries",
-        name_ko="국내 2차전지",
-        description="Battery cell, material, and energy storage leaders in Korea.",
-        sector="Energy",
+        key="domestic-defense",
+        name="Domestic Defense",
+        name_ko="국내 방산",
+        description="Domestic defense primes, shipbuilding, and tactical technology names.",
+        sector="Industrials",
         top_market_cap=[
             UniverseHolding(
-                symbol="373220",
-                name="LG Energy Solution",
-                local_name="LG에너지솔루션",
+                symbol="012450",
+                name="Hanwha Aerospace",
+                local_name="한화에어로스페이스",
                 market="KOSPI",
                 region="domestic",
                 currency="KRW",
-                sector="Korea Batteries",
-                sector_ko="국내 2차전지",
+                sector="Domestic Defense",
+                sector_ko="국내 방산",
                 market_cap_rank=1,
                 market_cap_bucket="mega-cap",
             ),
             UniverseHolding(
-                symbol="006400",
-                name="Samsung SDI",
-                local_name="삼성SDI",
+                symbol="042660",
+                name="Hanwha Ocean",
+                local_name="한화오션",
                 market="KOSPI",
                 region="domestic",
                 currency="KRW",
-                sector="Korea Batteries",
-                sector_ko="국내 2차전지",
+                sector="Domestic Defense",
+                sector_ko="국내 방산",
                 market_cap_rank=2,
                 market_cap_bucket="large-cap",
             ),
             UniverseHolding(
-                symbol="051910",
-                name="LG Chem",
-                local_name="LG화학",
+                symbol="064350",
+                name="Hyundai Rotem",
+                local_name="현대로템",
                 market="KOSPI",
                 region="domestic",
                 currency="KRW",
-                sector="Korea Batteries",
-                sector_ko="국내 2차전지",
+                sector="Domestic Defense",
+                sector_ko="국내 방산",
                 market_cap_rank=3,
                 market_cap_bucket="large-cap",
             ),
             UniverseHolding(
-                symbol="247540",
-                name="EcoPro BM",
-                local_name="에코프로비엠",
-                market="KOSDAQ",
+                symbol="047810",
+                name="Korea Aerospace Industries",
+                local_name="한국항공우주",
+                market="KOSPI",
                 region="domestic",
                 currency="KRW",
-                sector="Korea Batteries",
-                sector_ko="국내 2차전지",
+                sector="Domestic Defense",
+                sector_ko="국내 방산",
                 market_cap_rank=4,
                 market_cap_bucket="large-cap",
             ),
             UniverseHolding(
-                symbol="086520",
-                name="EcoPro",
-                local_name="에코프로",
-                market="KOSDAQ",
+                symbol="079550",
+                name="LIG Nex1",
+                local_name="LIG넥스원",
+                market="KOSPI",
                 region="domestic",
                 currency="KRW",
-                sector="Korea Batteries",
-                sector_ko="국내 2차전지",
+                sector="Domestic Defense",
+                sector_ko="국내 방산",
                 market_cap_rank=5,
                 market_cap_bucket="large-cap",
             ),
             UniverseHolding(
-                symbol="003670",
-                name="Posco Future M",
-                local_name="포스코퓨처엠",
+                symbol="272210",
+                name="Hanwha Systems",
+                local_name="한화시스템",
                 market="KOSPI",
                 region="domestic",
                 currency="KRW",
-                sector="Korea Batteries",
-                sector_ko="국내 2차전지",
+                sector="Domestic Defense",
+                sector_ko="국내 방산",
                 market_cap_rank=6,
                 market_cap_bucket="large-cap",
             ),
             UniverseHolding(
-                symbol="066970",
-                name="L&F",
-                local_name="엘앤에프",
-                market="KOSDAQ",
+                symbol="103140",
+                name="Poongsan",
+                local_name="풍산",
+                market="KOSPI",
                 region="domestic",
                 currency="KRW",
-                sector="Korea Batteries",
-                sector_ko="국내 2차전지",
+                sector="Domestic Defense",
+                sector_ko="국내 방산",
                 market_cap_rank=7,
                 market_cap_bucket="large-cap",
             ),
             UniverseHolding(
-                symbol="278280",
-                name="Chunbo",
-                local_name="천보",
-                market="KOSDAQ",
+                symbol="077970",
+                name="STX Engine",
+                local_name="STX엔진",
+                market="KOSPI",
                 region="domestic",
                 currency="KRW",
-                sector="Korea Batteries",
-                sector_ko="국내 2차전지",
+                sector="Domestic Defense",
+                sector_ko="국내 방산",
                 market_cap_rank=8,
                 market_cap_bucket="large-cap",
             ),
             UniverseHolding(
-                symbol="005070",
-                name="Cosmo AM&T",
-                local_name="코스모신소재",
+                symbol="003570",
+                name="SNT Dynamics",
+                local_name="SNT다이내믹스",
                 market="KOSPI",
                 region="domestic",
                 currency="KRW",
-                sector="Korea Batteries",
-                sector_ko="국내 2차전지",
+                sector="Domestic Defense",
+                sector_ko="국내 방산",
                 market_cap_rank=9,
                 market_cap_bucket="large-cap",
             ),
             UniverseHolding(
-                symbol="096770",
-                name="SK Innovation",
-                local_name="SK이노베이션",
+                symbol="064960",
+                name="SNT Motiv",
+                local_name="SNT모티브",
                 market="KOSPI",
                 region="domestic",
                 currency="KRW",
-                sector="Korea Batteries",
-                sector_ko="국내 2차전지",
+                sector="Domestic Defense",
+                sector_ko="국내 방산",
                 market_cap_rank=10,
                 market_cap_bucket="large-cap",
             ),
@@ -1449,12 +1468,30 @@ ADDITIONAL_THEME_UNIVERSE: tuple[ThemeUniverse, ...] = (
 THEME_UNIVERSE = (*THEME_UNIVERSE, *ADDITIONAL_THEME_UNIVERSE)
 
 
-def get_theme_universe() -> ThemeUniverseResponse:
+def get_theme_universe(
+    mode: str = "core",
+    include_extended: bool = False,
+) -> ThemeUniverseResponse:
+    resolved_mode = _normalize_theme_mode(mode)
+    include_all = include_extended or resolved_mode == "all"
+
+    themes_by_key = {theme.key: theme for theme in THEME_UNIVERSE}
+    selected: list[ThemeUniverse] = [
+        themes_by_key[key] for key in _CORE_THEME_KEYS if key in themes_by_key
+    ]
+
+    if include_all:
+        selected.extend(
+            theme for theme in THEME_UNIVERSE if theme.key not in set(_CORE_THEME_KEYS)
+        )
+
     return ThemeUniverseResponse(
-        count=len(THEME_UNIVERSE),
-        themes=list(THEME_UNIVERSE),
+        count=len(selected),
+        mode="all" if include_all else "core",
+        refreshed_at=datetime.now(tz=UTC).isoformat(),
+        themes=selected,
         notes=[
-            "Static first-pass universe for dashboard layout and theme strategy.",
+            f"Theme universe mode: {'all' if include_all else 'core'}.",
             "Market-cap ranks are curated metadata, not live market data.",
         ],
     )

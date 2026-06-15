@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -226,24 +228,82 @@ def test_read_theme_universe(client: TestClient) -> None:
 
     assert response.status_code == 200
     body = response.json()
-    assert body["count"] == 17
-    assert body["themes"][0]["key"] == "semiconductors"
+    assert body["count"] == 6
+    assert body["themes"][0]["key"] == "korea-semiconductors"
     assert body["themes"][0]["top_market_cap"][0]["market_cap_rank"] == 1
     themes_by_key = {theme["key"]: theme for theme in body["themes"]}
     assert themes_by_key["korea-semiconductors"]["name_ko"] == "국내 반도체"
     assert themes_by_key["korea-semiconductors"]["top_market_cap"][0]["symbol"] == "005930"
-    assert themes_by_key["quantum-computing"]["name_ko"] == "양자컴퓨터"
     assert themes_by_key["us-inverse-etfs"]["top_market_cap"][0]["symbol"] == "SH"
     assert themes_by_key["korea-inverse-etfs"]["top_market_cap"][1]["symbol"] == "252670"
     assert len(themes_by_key["korea-inverse-etfs"]["top_market_cap"]) == 10
 
 
+def test_read_theme_universe_with_all_mode_and_extended(client: TestClient) -> None:
+    response = client.get("/universe/themes?mode=all")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["count"] == 17
+    assert body["themes"][0]["key"] == "korea-semiconductors"
+    assert body["themes"][1]["key"] == "domestic-defense"
+
+    response = client.get("/universe/themes?include_extended=true")
+    assert response.status_code == 200
+    assert response.json()["count"] == 17
+
+
+def test_startup_gap_fill_watchlist_history_is_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    symbols = tuple(
+        kis.KisSymbol(
+            symbol=f"SYM{i}",
+            name=f"SYM{i}",
+            local_name=f"SYM{i}",
+            market="KOSPI",
+            region="domestic",
+            currency="KRW",
+            sector="Test",
+            sector_ko="Test",
+        )
+        for i in range(10)
+    )
+    monkeypatch.setattr(market_data, "WATCHLIST_SYMBOLS", symbols)
+
+    captured: list[str] = []
+
+    async def fake_downloaded_chart(symbol: str, range_key: kis.ChartRange) -> kis.KisChartResponse:
+        captured.append(symbol)
+        return kis.KisChartResponse(
+            source=kis.YAHOO_CHART_SOURCE,
+            environment="paper",
+            symbol=symbol,
+            range=range_key,
+            interval="5m",
+            count=0,
+            data=[],
+            errors=[],
+        )
+
+    monkeypatch.setattr(market_data, "_history_gap_needs_backfill_sync", lambda _: True)
+    monkeypatch.setattr(market_data, "get_watchlist_chart", fake_downloaded_chart)
+    monkeypatch.setattr(
+        market_data,
+        "_persist_gap_fill_history_sync",
+        lambda _symbol, _candles: 0,
+    )
+
+    asyncio.run(market_data._startup_gap_fill_watchlist_history())
+
+    assert len(captured) == 5
+
+
 @pytest.mark.parametrize(
     ("value", "expected"),
     [
-        (None, 1),
+        (None, 30),
+        ("3", 5),
         ("7", 7),
-        ("not-a-number", 1),
+        ("not-a-number", 30),
     ],
 )
 def test_refresh_interval_seconds(
@@ -257,3 +317,117 @@ def test_refresh_interval_seconds(
         monkeypatch.setenv("MARKET_DATA_REFRESH_SECONDS", value)
 
     assert market_data.refresh_interval_seconds() == expected
+
+
+def test_start_market_data_scheduler_respects_env_switch(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(market_data, "_scheduler_task", None)
+    monkeypatch.setattr(market_data, "_background_refresh_task", None)
+    monkeypatch.setenv("MARKET_DATA_SCHEDULER_ENABLED", "false")
+    monkeypatch.setattr(market_data, "_scheduler_loop", lambda: asyncio.sleep(0.01))
+    monkeypatch.setattr(
+        market_data,
+        "_startup_gap_fill_watchlist_history",
+        lambda: asyncio.sleep(0),
+    )
+
+    asyncio.run(market_data.start_market_data_scheduler())
+
+    assert market_data._scheduler_task is None
+
+
+def test_get_latest_or_refresh_prefers_cached_data(monkeypatch: pytest.MonkeyPatch) -> None:
+    quote = kis.KisWatchlistResponse(
+        environment="paper",
+        count=1,
+        data=[
+            kis.KisQuote(
+                symbol="NVDA",
+                name="NVIDIA Corp.",
+                local_name="NVIDIA Corp.",
+                market="NASDAQ",
+                region="overseas",
+                currency="USD",
+                price=1.0,
+                change_amount=0.0,
+                change=0.0,
+                sector="Semiconductors",
+                sector_ko="Semiconductors",
+                fetched_at=datetime(2026, 6, 1, tzinfo=UTC).isoformat(),
+            )
+        ],
+        errors=[],
+    )
+    latest_time = datetime(2026, 6, 1, tzinfo=UTC) - timedelta(hours=1)
+    old_task_flag = {"scheduled": 0}
+
+    async def fake_schedule_background_refresh() -> None:
+        old_task_flag["scheduled"] += 1
+
+    async def fake_refresh() -> kis.KisWatchlistResponse:
+        raise AssertionError("refresh_market_data should not be called when stale cache exists")
+
+    monkeypatch.setattr(market_data, "_latest_snapshot_sync", lambda: (quote, latest_time))
+    monkeypatch.setattr(
+        market_data,
+        "_schedule_background_market_refresh",
+        fake_schedule_background_refresh,
+    )
+    monkeypatch.setattr(market_data, "refresh_market_data", fake_refresh)
+    monkeypatch.setenv("MARKET_DATA_REFRESH_SECONDS", "10")
+
+    result = asyncio.run(market_data.get_latest_or_refresh_watchlist_quotes())
+
+    assert result == quote
+    assert old_task_flag["scheduled"] == 1
+
+
+def test_access_token_request_cooldown(monkeypatch: pytest.MonkeyPatch) -> None:
+    attempts = {"count": 0}
+
+    async def fake_post(self: httpx.AsyncClient, *args: object, **kwargs: object) -> None:
+        attempts["count"] += 1
+        raise RuntimeError("network fail")
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    monkeypatch.setattr(kis, "_access_token", None)
+    monkeypatch.setattr(kis, "_access_token_expires_at", 0.0)
+    monkeypatch.setattr(kis, "_access_token_retry_after", 0.0)
+    monkeypatch.setattr(kis, "_credential", lambda _: "value")
+
+    client = httpx.AsyncClient()
+
+    with pytest.raises(kis.KisServiceError):
+        asyncio.run(kis._access_token_for(client))
+
+    with pytest.raises(kis.KisServiceError):
+        asyncio.run(kis._access_token_for(client))
+
+    assert attempts["count"] == 1
+
+
+def test_access_token_invalid_json_response_uses_cooldown(monkeypatch: pytest.MonkeyPatch) -> None:
+    attempts = {"count": 0}
+
+    async def fake_post(self: httpx.AsyncClient, *args: object, **kwargs: object) -> httpx.Response:
+        attempts["count"] += 1
+        return httpx.Response(
+            429,
+            content=b"Too Many Requests",
+            request=httpx.Request("POST", "https://example.test/oauth2/tokenP"),
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    monkeypatch.setattr(kis, "_access_token", None)
+    monkeypatch.setattr(kis, "_access_token_expires_at", 0.0)
+    monkeypatch.setattr(kis, "_access_token_retry_after", 0.0)
+    monkeypatch.setattr(kis, "_credential", lambda _: "value")
+
+    client = httpx.AsyncClient()
+
+    with pytest.raises(kis.KisServiceError, match="invalid JSON"):
+        asyncio.run(kis._access_token_for(client))
+
+    with pytest.raises(kis.KisServiceError, match="temporarily unavailable"):
+        asyncio.run(kis._access_token_for(client))
+
+    assert attempts["count"] == 1

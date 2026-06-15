@@ -21,6 +21,7 @@ KIS_PAPER_BASE_URL = "https://openapivts.koreainvestment.com:29443"
 KIS_QUOTE_CACHE_TTL_SECONDS = 10
 KIS_PAPER_CALL_INTERVAL_SECONDS = 1.05
 KIS_REAL_CALL_INTERVAL_SECONDS = 0.12
+KIS_TOKEN_REQUEST_COOLDOWN_SECONDS = 65.0
 YAHOO_CHART_BASE_URL = "https://query1.finance.yahoo.com/v8/finance/chart"
 YAHOO_CHART_SOURCE = "Yahoo Finance chart download"
 
@@ -152,6 +153,7 @@ WATCHLIST_SYMBOLS: tuple[KisSymbol, ...] = (
 
 _access_token: str | None = None
 _access_token_expires_at = 0.0
+_access_token_retry_after = 0.0
 _quote_cache: tuple[float, KisWatchlistResponse] | None = None
 _chart_cache: dict[tuple[str, ChartRange], tuple[float, KisChartResponse]] = {}
 
@@ -234,7 +236,7 @@ def _universe_symbol(symbol_code: str) -> KisSymbol | None:
     except Exception:
         return None
 
-    for theme in get_theme_universe().themes:
+    for theme in get_theme_universe(mode="all").themes:
         for holding in theme.top_market_cap:
             if holding.symbol.upper() == normalized_symbol:
                 exchange_code = None
@@ -301,25 +303,44 @@ def _is_watchlist_symbol(symbol: KisSymbol) -> bool:
 
 
 async def _access_token_for(client: httpx.AsyncClient) -> str:
-    global _access_token, _access_token_expires_at
+    global _access_token, _access_token_expires_at, _access_token_retry_after
 
     now = time.monotonic()
     if _access_token and now < _access_token_expires_at:
         return _access_token
 
+    if now < _access_token_retry_after:
+        raise KisServiceError(
+            "KIS token endpoint is temporarily unavailable. Try again shortly.",
+            status_code=503,
+        )
+
     app_key = _credential("KIS_APP_KEY")
     app_secret = _credential("KIS_APP_SECRET")
-    response = await client.post(
-        f"{_kis_base_url()}/oauth2/tokenP",
-        json={
-            "grant_type": "client_credentials",
-            "appkey": app_key,
-            "appsecret": app_secret,
-        },
-    )
-    payload = response.json()
+    try:
+        response = await client.post(
+            f"{_kis_base_url()}/oauth2/tokenP",
+            json={
+                "grant_type": "client_credentials",
+                "appkey": app_key,
+                "appsecret": app_secret,
+            },
+        )
+    except Exception as exc:
+        _access_token_retry_after = now + KIS_TOKEN_REQUEST_COOLDOWN_SECONDS
+        raise KisServiceError("Failed to request KIS token.", status_code=502) from exc
+
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        _access_token_retry_after = now + KIS_TOKEN_REQUEST_COOLDOWN_SECONDS
+        raise KisServiceError(
+            f"KIS token request returned invalid JSON: HTTP {response.status_code}",
+            status_code=502,
+        ) from exc
 
     if response.status_code >= 400 or not payload.get("access_token"):
+        _access_token_retry_after = now + KIS_TOKEN_REQUEST_COOLDOWN_SECONDS
         raise KisServiceError(
             payload.get("error_description")
             or payload.get("msg1")
@@ -329,6 +350,7 @@ async def _access_token_for(client: httpx.AsyncClient) -> str:
 
     _access_token = str(payload["access_token"])
     expires_in = int(payload.get("expires_in") or 60 * 60 * 23)
+    _access_token_retry_after = 0.0
     _access_token_expires_at = now + max(60, expires_in - 300)
 
     return _access_token

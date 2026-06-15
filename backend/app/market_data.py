@@ -20,10 +20,17 @@ from app.kis import (
     KisServiceError,
     KisWatchlistResponse,
     _kis_environment,
+    get_watchlist_chart,
     get_watchlist_quotes,
 )
 
-DEFAULT_REFRESH_SECONDS = 1
+DEFAULT_REFRESH_SECONDS = 30
+MIN_REFRESH_SECONDS = 5
+DEFAULT_GAP_FILL_SYMBOLS = 5
+GAP_FILL_RANGE_KEY: ChartRange = "1D"
+GAP_FILL_MAX_CANDLES = 30
+HISTORY_GAP_LOOKBACK_HOURS = 6
+HISTORY_GAP_MIN_POINTS = 2
 LATEST_COLLECTION = "market_quote_latest"
 HISTORY_COLLECTION = "market_quote_history"
 RUNS_COLLECTION = "market_refresh_runs"
@@ -32,6 +39,9 @@ _scheduler_task: asyncio.Task[None] | None = None
 _refresh_lock: asyncio.Lock | None = None
 _last_refresh_started_at = 0.0
 _last_refresh_response: KisWatchlistResponse | None = None
+_last_background_refresh_started_at = 0.0
+_background_refresh_task: asyncio.Task[None] | None = None
+_startup_gap_fill_completed = False
 _indexes_ready = False
 logger = logging.getLogger(__name__)
 
@@ -40,9 +50,19 @@ def refresh_interval_seconds() -> int:
     raw_value = os.getenv("MARKET_DATA_REFRESH_SECONDS", str(DEFAULT_REFRESH_SECONDS)).strip()
 
     try:
-        return max(1, int(raw_value))
+        return max(MIN_REFRESH_SECONDS, int(raw_value))
     except ValueError:
         return DEFAULT_REFRESH_SECONDS
+
+
+def market_data_scheduler_enabled() -> bool:
+    value = os.getenv("MARKET_DATA_SCHEDULER_ENABLED", "false").strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
+def startup_gap_fill_enabled() -> bool:
+    value = os.getenv("STARTUP_GAP_FILL_ENABLED", "true").strip().lower()
+    return value in {"1", "true", "yes", "on"}
 
 
 def _utc_now() -> datetime:
@@ -227,6 +247,87 @@ def _latest_snapshot_sync() -> tuple[KisWatchlistResponse, datetime | None]:
     )
 
 
+def _history_gap_needs_backfill_sync(symbol: str) -> bool:
+    collection = get_collection(HISTORY_COLLECTION)
+    cutoff = _utc_now() - timedelta(hours=HISTORY_GAP_LOOKBACK_HOURS)
+
+    recent_count = collection.count_documents(
+        {"symbol": symbol, "stored_at": {"$gte": cutoff.replace(tzinfo=None)}},
+        limit=HISTORY_GAP_MIN_POINTS,
+    )
+
+    return recent_count < HISTORY_GAP_MIN_POINTS
+
+
+def _persist_gap_fill_history_sync(symbol: str, candles: list[KisChartCandle]) -> int:
+    if not candles:
+        return 0
+
+    metadata = None
+    for watchlist_symbol in WATCHLIST_SYMBOLS:
+        if watchlist_symbol.symbol == symbol:
+            metadata = watchlist_symbol
+            break
+
+    history_collection = get_collection(HISTORY_COLLECTION)
+    to_store: list[dict[str, Any]] = []
+
+    for candle in candles[:GAP_FILL_MAX_CANDLES]:
+        stored_at = datetime.fromisoformat(candle.timestamp)
+        if stored_at.tzinfo is None:
+            stored_at = stored_at.replace(tzinfo=UTC)
+
+        existing = history_collection.find_one(
+            {"symbol": symbol, "stored_at": stored_at},
+            {"_id": True},
+        )
+        if existing:
+            continue
+
+        to_store.append(
+            {
+                "symbol": symbol,
+                "stored_at": stored_at,
+                "price": candle.close,
+                "source": candle.source,
+                "name": metadata.name if metadata else symbol,
+                "local_name": metadata.local_name if metadata else symbol,
+                "market": metadata.market if metadata else "KOSPI",
+                "region": metadata.region if metadata else "domestic",
+                "currency": metadata.currency if metadata else "KRW",
+                "sector": metadata.sector if metadata else "Unknown",
+                "sector_ko": metadata.sector_ko if metadata else "Unknown",
+                "open": candle.open,
+                "high": candle.high,
+                "low": candle.low,
+                "volume": candle.volume,
+            }
+        )
+
+    if to_store:
+        history_collection.insert_many(to_store)
+
+    return len(to_store)
+
+
+async def _fill_gap_for_symbol(symbol: str) -> int:
+    if not await asyncio.to_thread(_history_gap_needs_backfill_sync, symbol):
+        return 0
+
+    response = await get_watchlist_chart(symbol, GAP_FILL_RANGE_KEY)
+    return await asyncio.to_thread(_persist_gap_fill_history_sync, symbol, response.data)
+
+
+async def _startup_gap_fill_watchlist_history() -> None:
+    symbols = [symbol.symbol for symbol in WATCHLIST_SYMBOLS[:DEFAULT_GAP_FILL_SYMBOLS]]
+
+    for symbol in symbols:
+        try:
+            await _fill_gap_for_symbol(symbol)
+        except Exception:
+            logger.exception("Gap-fill history check failed.")
+
+
 def _live_chart_response_sync(symbol: str, range_key: ChartRange) -> KisChartResponse:
     start_at, _ = _live_chart_window(range_key)
     collection = get_collection(HISTORY_COLLECTION)
@@ -263,7 +364,10 @@ async def refresh_market_data() -> KisWatchlistResponse:
 
     async with _refresh_lock:
         now = time.monotonic()
-        recent_refresh_window = max(1.0, refresh_interval_seconds() - 0.5)
+        recent_refresh_window = max(
+            MIN_REFRESH_SECONDS - 0.5,
+            refresh_interval_seconds() - 0.5,
+        )
 
         if (
             _last_refresh_response
@@ -277,6 +381,30 @@ async def refresh_market_data() -> KisWatchlistResponse:
         _last_refresh_response = response
 
         return response
+
+
+async def _schedule_background_market_refresh() -> None:
+    global _last_background_refresh_started_at, _background_refresh_task
+
+    now = time.monotonic()
+    if (
+        _background_refresh_task
+        and not _background_refresh_task.done()
+    ):
+        return
+
+    if now - _last_background_refresh_started_at < refresh_interval_seconds():
+        return
+
+    _last_background_refresh_started_at = now
+
+    async def _runner() -> None:
+        try:
+            await refresh_market_data()
+        except Exception:
+            logger.exception("Background market data refresh failed.")
+
+    _background_refresh_task = asyncio.create_task(_runner(), name="market-data-refresh-bg")
 
 
 async def _refresh_market_data_unlocked() -> KisWatchlistResponse:
@@ -326,11 +454,8 @@ async def get_latest_or_refresh_watchlist_quotes() -> KisWatchlistResponse:
         if age_seconds <= refresh_interval_seconds() * 2:
             return latest_response
 
-    if latest_response.count:
-        try:
-            return await refresh_market_data()
-        except Exception:
-            return latest_response
+        await _schedule_background_market_refresh()
+        return latest_response
 
     return await refresh_market_data()
 
@@ -353,7 +478,14 @@ async def _scheduler_loop() -> None:
 
 
 async def start_market_data_scheduler() -> None:
-    global _scheduler_task
+    global _scheduler_task, _startup_gap_fill_completed
+
+    if startup_gap_fill_enabled() and not _startup_gap_fill_completed:
+        await _startup_gap_fill_watchlist_history()
+        _startup_gap_fill_completed = True
+
+    if not market_data_scheduler_enabled():
+        return
 
     if _scheduler_task and not _scheduler_task.done():
         return
@@ -362,16 +494,26 @@ async def start_market_data_scheduler() -> None:
 
 
 async def stop_market_data_scheduler() -> None:
-    global _scheduler_task
+    global _background_refresh_task, _scheduler_task
 
-    if not _scheduler_task:
+    if _scheduler_task:
+        _scheduler_task.cancel()
+
+        try:
+            await _scheduler_task
+        except asyncio.CancelledError:
+            pass
+
+        _scheduler_task = None
+
+    if not _background_refresh_task:
         return
 
-    _scheduler_task.cancel()
+    _background_refresh_task.cancel()
 
     try:
-        await _scheduler_task
+        await _background_refresh_task
     except asyncio.CancelledError:
         pass
 
-    _scheduler_task = None
+    _background_refresh_task = None

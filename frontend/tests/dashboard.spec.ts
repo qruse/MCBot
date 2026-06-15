@@ -44,7 +44,7 @@ test("brokerage dashboard controls work", async ({ page }) => {
     errors: [],
   };
 
-  await page.route(/\/universe\/themes$/, async (route) => {
+  await page.route(/\/universe\/themes/, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -109,7 +109,9 @@ test("brokerage dashboard controls work", async ({ page }) => {
 
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await expect(page.getByRole("heading", { name: "Money Copy Bot" })).toBeVisible();
-  await expect(page.getByTestId("auto-run-toggle")).toBeChecked();
+  await expect(page.getByTestId("auto-run-toggle")).not.toBeChecked();
+  await expect(page.getByTestId("theme-mode-core")).toBeVisible();
+  await expect(page.getByTestId("theme-refresh-meta")).toContainText(/Core 6/);
   await expect(page.getByTestId("simulation-reset")).toBeVisible();
   await expect(page.getByTestId("paper-cash-input")).toHaveValue("100000000");
   await expect(page.locator("aside nav button")).toHaveCount(1);
@@ -123,6 +125,15 @@ test("brokerage dashboard controls work", async ({ page }) => {
   await expect(page.locator('line[class*="volumeDivider"]')).toHaveCount(1);
   await expect(page.getByTestId("chart-source-label")).toContainText(/candles/);
   await expect(page.locator('div[class*="chartCanvas"]')).toHaveCSS("background-color", "rgb(10, 16, 24)");
+  const chartPanelBox = await page.locator('[class*="chartPanel"]').boundingBox();
+  const chartCanvasBox = await page.locator('[class*="chartCanvas"]').boundingBox();
+  const watchPanelBox = await page.locator('[class*="watchPanel"]').boundingBox();
+
+  expect(chartPanelBox).not.toBeNull();
+  expect(chartCanvasBox).not.toBeNull();
+  expect(watchPanelBox).not.toBeNull();
+  expect(chartCanvasBox!.x + chartCanvasBox!.width).toBeLessThanOrEqual(chartPanelBox!.x + chartPanelBox!.width + 1);
+  expect(chartCanvasBox!.x + chartCanvasBox!.width).toBeLessThanOrEqual(watchPanelBox!.x - 1);
   await expect(page.locator('text[class*="axisLabel"]').filter({ hasText: /\d{2}\/\d{2}\s\d{2}:\d{2}/ }).first()).toBeVisible();
   await page.getByTestId("range-1D").click();
   await page.waitForTimeout(1500);
@@ -136,6 +147,7 @@ test("brokerage dashboard controls work", async ({ page }) => {
   await expect(page.getByText(/1위 테마 상승추세/).first()).toBeVisible();
   await expect(page.locator('g[class*="extremeLabels"] text')).toHaveCount(0);
   await expect(page.getByText("거래비용 국내 0.01405% / 편도")).toBeVisible();
+  await expect(page.getByText("국내 방산").first()).toBeVisible();
   await expect(page.getByTestId("universe-refresh")).toBeVisible();
   await page.getByTestId("universe-refresh").click();
   await expect(page.getByText(/테마.*(갱신 완료|샘플 유니버스 유지)/).first()).toBeVisible();
@@ -146,6 +158,8 @@ test("brokerage dashboard controls work", async ({ page }) => {
   await expect(page.getByText(/미국 매수 0.250%/).first()).toBeVisible();
   await expect(page.getByText(/매도 0.252%/).first()).toBeVisible();
 
+  await page.getByTestId("theme-mode-all").click();
+  await expect(page.getByTestId("theme-refresh-meta")).toContainText(/Extended/);
   await page.locator('input[placeholder]').fill("IONQ");
   await page.getByRole("button", { name: /IONQ/ }).first().click();
   await page.getByTestId("range-1M").click();
@@ -159,8 +173,6 @@ test("brokerage dashboard controls work", async ({ page }) => {
   await page.getByTestId("chart-type-candle").click();
   await expect(page.locator('g[class*="candleLayer"] rect').first()).toBeVisible();
 
-  await page.getByTestId("auto-run-toggle").uncheck();
-  await expect(page.getByTestId("auto-run-toggle")).not.toBeChecked();
   await page.getByTestId("auto-run-toggle").check();
   await expect(page.getByTestId("auto-run-toggle")).toBeChecked();
   await page.getByTestId("auto-run-toggle").uncheck();
@@ -178,4 +190,58 @@ test("brokerage dashboard controls work", async ({ page }) => {
   await page.screenshot({ path: "../test_logs/frontend-dashboard-qa-mobile.png", fullPage: false });
 
   expect(consoleIssues).toEqual([]);
+});
+
+test("theme fallback follows the selected universe mode when the API is unavailable", async ({ page }) => {
+  await page.route(/\/universe\/themes/, async (route) => {
+    await route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({ detail: "theme service unavailable" }),
+    });
+  });
+
+  await page.route(/\/quotes\/kis\/watchlist$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        source: "e2e quote fixture",
+        environment: "paper",
+        count: 0,
+        data: [],
+        errors: [],
+      }),
+    });
+  });
+
+  await page.route(/\/quotes\/kis\/history\//, async (route) => {
+    const requestUrl = new URL(route.request().url());
+    const pathParts = requestUrl.pathname.split("/");
+
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        source: "e2e empty chart fixture",
+        environment: "paper",
+        symbol: pathParts[pathParts.length - 1],
+        range: requestUrl.searchParams.get("range"),
+        interval: "fixture",
+        count: 0,
+        data: [],
+        errors: [],
+      }),
+    });
+  });
+
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await expect(page.getByTestId("theme-refresh-meta")).toContainText(/Core 6/);
+
+  await page.getByTestId("theme-mode-all").click();
+  await expect(page.getByTestId("theme-refresh-meta")).toContainText(/Extended/);
+  await expect(page.getByTestId("theme-refresh-meta")).not.toContainText(/Extended 6/);
+
+  await page.getByTestId("market-tab-overseas").click();
+  await expect(page.getByText("IONQ").first()).toBeVisible();
 });

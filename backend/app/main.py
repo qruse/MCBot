@@ -1,7 +1,7 @@
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -118,5 +118,8 @@ async def read_kis_watchlist_history(
 
 
 @app.get("/universe/themes", response_model=ThemeUniverseResponse)
-def read_theme_universe() -> ThemeUniverseResponse:
-    return get_theme_universe()
+def read_theme_universe(
+    mode: Annotated[Literal["core", "all"], Query()] = "core",
+    include_extended: Annotated[bool, Query()] = False,
+) -> ThemeUniverseResponse:
+    return get_theme_universe(mode=mode, include_extended=include_extended)

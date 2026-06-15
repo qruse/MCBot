@@ -19,9 +19,9 @@ automated trading assistant.
 - `backend/app/kis.py`: Korea Investment Securities Open API client for the live quote watchlist
   (`NVDA`, `MU`, `SNDK`, `005930`, `000660`) with token, quote, historical chart caching, and
   Yahoo Finance chart-download fallback for broader theme and ETF history
-- `backend/app/market_data.py`: background 10-second KIS quote refresh scheduler, MongoDB latest
-  quote persistence, quote history persistence, intraday chart aggregation, and latest-or-refresh
-  API helper
+- `backend/app/market_data.py`: optional KIS quote refresh scheduler, startup historical gap-fill,
+  MongoDB latest quote persistence, quote history persistence, intraday chart aggregation, and
+  latest-or-refresh API helper
 - `backend/app/universe.py`: curated first-pass theme universe API data with theme-level top
   market-cap top 10 metadata for dashboard strategy experiments
 - `backend/tests/test_main.py`: backend endpoint tests
@@ -54,17 +54,21 @@ automated trading assistant.
   history exists, otherwise downloads 30-minute Yahoo chart candles. Longer ranges use KIS chart
   data first, then Yahoo Finance chart-download fallback for theme-universe symbols and inverse
   ETFs that KIS cannot serve.
-- FastAPI startup launches a background market data scheduler. It refreshes KIS watchlist quotes
-  every `MARKET_DATA_REFRESH_SECONDS` seconds, defaulting to 1 second for first-pass trading
-  simulation work, upserts `market_quote_latest`, and appends
-  `market_quote_history` so the service keeps data current even when the frontend is not open.
+- FastAPI startup runs a bounded historical gap-fill by default (`STARTUP_GAP_FILL_ENABLED=true`)
+  for a small watchlist sample so missing intraday candles are downloaded before the UI relies on
+  cached history. The continuous market data scheduler is disabled by default
+  (`MARKET_DATA_SCHEDULER_ENABLED=false`) to protect API rate limits; when enabled, it refreshes
+  KIS watchlist quotes every `MARKET_DATA_REFRESH_SECONDS` seconds, defaulting to 30 seconds with a
+  5-second minimum.
 - Frontend development is served on `http://localhost:3001` for this app.
-- `GET /universe/themes` returns curated theme/sector groups and top market-cap top 10 metadata,
+- `GET /universe/themes` defaults to the rate-limit-friendly `mode=core` universe with six themes:
+  domestic semiconductors, domestic defense, AI semiconductors, AI platforms, US inverse ETFs, and
+  Korea inverse ETFs. `mode=all` or `include_extended=true` returns the extended research universe
   including quantum computing, power/grid, data centers, nuclear, robotics/humanoids, defense,
-  aerospace/space, biotech, blockchain, US inverse ETFs, and Korea inverse ETFs.
-- The frontend dashboard now includes a denser brokerage-style candlestick chart, 1-second simulated
-  ticks, a configurable paper-trading account defaulting to 100,000,000 KRW with reset, and a
-  theme-rotation automation panel.
+  aerospace/space, biotech, blockchain, and inverse ETF themes.
+- The frontend dashboard now includes a denser brokerage-style candlestick chart, 10-second quote
+  polling with local simulated ticks, a configurable paper-trading account defaulting to 100,000,000
+  KRW with reset, and a theme-rotation automation panel.
 - The dashboard stock list is grouped by theme, supports domestic/overseas paper-trading views, and
   falls back to seeded historical candles when very short realtime buffers would make the chart flat.
 - The main chart uses a classic brokerage-style candlestick view with 5/20/60/120 moving averages,
@@ -91,8 +95,12 @@ automated trading assistant.
   break, theme MA rollover, near-close liquidation, or a 5% portfolio holding drawdown sidecar.
 - The sidebar navigation is intentionally reduced to Home only. Held positions show symbol, company
   name, shares, value, and P/L, and clicking a position focuses its chart.
-- The dashboard has a theme/universe refresh button that refetches `/universe/themes` so market-cap
-  top lists can be refreshed without reloading the app.
+- The dashboard has Core/Extended theme mode controls and a 60-second-cooldown theme/universe
+  refresh button that refetches `/universe/themes` so market-cap top lists can be refreshed without
+  reloading the app. If the theme API is unavailable, the selected mode falls back to its matching
+  local universe instead of silently staying on the prior mode.
+- The auto-trading simulation starts paused by default; users must explicitly enable the start
+  toggle before the paper-trading loop can place simulated orders.
 - The automation guardrails reduce churn through stricter theme MA rollover confirmation instead of
   time locks: rollover requires fast/slow MA spread weakness, fast MA decline, weak stock score, and
   at least 7 of the theme top 10 showing the same deterioration.

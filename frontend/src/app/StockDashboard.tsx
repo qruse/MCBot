@@ -27,6 +27,7 @@ type ChartType = "candle" | "line";
 type MarketScope = "domestic" | "overseas";
 type Language = "en" | "ko";
 type Signal = "Buy" | "Watch" | "Hold";
+type UniverseMode = "core" | "all";
 
 type ChartPoint = {
   label: string;
@@ -100,6 +101,8 @@ type ThemeUniverseApiTheme = {
 type ThemeUniverseApiResponse = {
   source: string;
   count: number;
+  mode?: UniverseMode;
+  refreshed_at?: string;
   themes: ThemeUniverseApiTheme[];
   notes: string[];
 };
@@ -179,6 +182,9 @@ const maRolloverSpreadBuffer = 0.004;
 const maRolloverThemeMomentumFloor = -0.18;
 const chartPaddingLeft = 64;
 const chartPaddingRight = 82;
+const quotePollingMs = 10_000;
+const liveChartPollingMs = 5_000;
+const themeRefreshCooldownMs = 60_000;
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 
 const copy = {
@@ -196,6 +202,9 @@ const copy = {
     loadingQuotes: "Loading quotes",
     quoteError: "Quote sync error",
     refreshQuotes: "Refresh quotes",
+    themeModeCore: "Core",
+    themeModeAll: "Extended",
+    refreshThemes: "Refresh TOP10",
     updated: "Updated",
     deskMode: "Trading desk",
     rangeMove: "Range move",
@@ -267,6 +276,9 @@ const copy = {
     loadingQuotes: "\uC2DC\uC138 \uBD88\uB7EC\uC624\uB294 \uC911",
     quoteError: "\uC2DC\uC138 \uC5F0\uB3D9 \uC624\uB958",
     refreshQuotes: "\uC2DC\uC138 \uC0C8\uB85C\uACE0\uCE68",
+    themeModeCore: "\uCF54\uC5B4",
+    themeModeAll: "\uD655\uC7A5",
+    refreshThemes: "\uD14C\uB9C8 TOP10 \uAC31\uC2E0",
     updated: "\uAC31\uC2E0",
     deskMode: "\uD2B8\uB808\uC774\uB529 \uB370\uC2A4\uD06C",
     rangeMove: "\uAE30\uAC04 \uB4F1\uB77D",
@@ -382,21 +394,21 @@ const themeSeed = [
     ],
   },
   {
-    id: "k-battery",
-    name: "Korea Batteries",
-    nameKo: "\uAD6D\uB0B4 2\uCC28\uC804\uC9C0",
+    id: "domestic-defense",
+    name: "Korea Defense",
+    nameKo: "\uAD6D\uB0B4 \uBC29\uC0B0",
     region: "domestic" as const,
     stocks: [
-      ["373220", "LG Energy Solution", "LG\uC5D0\uB108\uC9C0\uC194\uB8E8\uC158", "KOSPI", 356000, 0.54, 833_000],
-      ["006400", "Samsung SDI", "\uC0BC\uC131SDI", "KOSPI", 421000, 0.78, 289_000],
-      ["051910", "LG Chem", "LG\uD654\uD559", "KOSPI", 392500, -0.19, 277_000],
-      ["247540", "EcoPro BM", "\uC5D0\uCF54\uD504\uB85CBM", "KOSDAQ", 213500, 1.66, 228_000],
-      ["086520", "EcoPro", "\uC5D0\uCF54\uD504\uB85C", "KOSDAQ", 97200, 1.12, 129_000],
-      ["003670", "Posco Future M", "\uD3EC\uC2A4\uCF54\uD4E8\uCC98\uC5E0", "KOSPI", 257000, 0.47, 111_000],
-      ["066970", "L&F", "\uC5D8\uC564\uC5D0\uD504", "KOSDAQ", 143800, -0.36, 46_000],
-      ["278280", "Chunbo", "\uCC9C\uBCF4", "KOSDAQ", 89400, 0.28, 17_000],
-      ["005070", "Cosmo AM&T", "\uCF54\uC2A4\uBAA8\uC2E0\uC18C\uC7AC", "KOSPI", 125600, 0.71, 29_000],
-      ["096770", "SK Innovation", "SK\uC774\uB178\uBCA0\uC774\uC158", "KOSPI", 118400, -0.43, 109_000],
+      ["012450", "Hanwha Aerospace", "\uD55C\uD654\uC5D0\uC5B4\uB85C\uC2A4\uD398\uC774\uC2A4", "KOSPI", 1084000, 2.18, 54_000],
+      ["042660", "Hanwha Ocean", "\uD55C\uD654\uC624\uC158", "KOSPI", 123400, 1.82, 37_800],
+      ["064350", "Hyundai Rotem", "\uD604\uB300\uB85C\uD15C", "KOSPI", 213000, 1.64, 23_200],
+      ["047810", "Korea Aerospace", "\uD55C\uAD6D\uD56D\uACF5\uC6B0\uC8FC", "KOSPI", 147600, 1.18, 14_300],
+      ["079550", "LIG Nex1", "LIG\uB125\uC2A4\uC6D0", "KOSPI", 426000, 1.42, 9_400],
+      ["272210", "Hanwha Systems", "\uD55C\uD654\uC2DC\uC2A4\uD15C", "KOSPI", 99500, 0.92, 18_000],
+      ["103140", "Poongsan", "\uD48D\uC0B0", "KOSPI", 75500, 0.78, 2_100],
+      ["077970", "STX Engine", "STX\uC5D4\uC9C4", "KOSPI", 36650, 0.58, 1_470],
+      ["003570", "SNT Dynamics", "SNT\uB2E4\uC774\uB0B4\uBBF9\uC2A4", "KOSPI", 43600, 0.64, 1_440],
+      ["064960", "SNT Motiv", "SNT\uBAA8\uD2F0\uBE0C", "KOSPI", 31150, 0.52, 830],
     ],
   },
 ] as const;
@@ -603,6 +615,14 @@ const additionalThemeSeed = [
 ] as const;
 
 const seededThemeUniverse = [...themeSeed, ...additionalThemeSeed] as const;
+const coreThemeIds = new Set([
+  "k-semi",
+  "domestic-defense",
+  "ai-semi",
+  "us-platform",
+  "us-inverse-etfs",
+  "korea-inverse-etfs",
+]);
 
 function formatClock(totalMinutes: number) {
   const hours = Math.floor(totalMinutes / 60);
@@ -712,8 +732,8 @@ function buildSeries(price: number, change: number, seed: number): Record<RangeK
   ) as Record<RangeKey, ChartPoint[]>;
 }
 
-function buildUniverse(): ThemeUniverse[] {
-  return seededThemeUniverse.map((theme) => ({
+function buildUniverse(mode: UniverseMode = "core"): ThemeUniverse[] {
+  return seededThemeUniverse.filter((theme) => mode === "all" || coreThemeIds.has(theme.id)).map((theme) => ({
     ...theme,
     stocks: theme.stocks.map((row, index) => {
       const [symbol, name, localName, market, price, change, marketCap] = row;
@@ -748,7 +768,7 @@ function buildUniverse(): ThemeUniverse[] {
 }
 
 function stockFallbackPrice(symbol: string, region: MarketScope, rank: number) {
-  const fallbackStock = buildUniverse()
+  const fallbackStock = buildUniverse("all")
     .flatMap((theme) => theme.stocks)
     .find((stock) => stock.symbol === symbol);
 
@@ -769,9 +789,9 @@ function stockFallbackPrice(symbol: string, region: MarketScope, rank: number) {
   };
 }
 
-function universeFromApi(payload: ThemeUniverseApiResponse): ThemeUniverse[] {
+function universeFromApi(payload: ThemeUniverseApiResponse, mode: UniverseMode): ThemeUniverse[] {
   if (!payload.themes.length) {
-    return buildUniverse();
+    return buildUniverse(mode);
   }
 
   return payload.themes.map((theme) => ({
@@ -1263,13 +1283,18 @@ export default function StockDashboard() {
   const [range, setRange] = useState<RangeKey>("LIVE");
   const [chartType, setChartType] = useState<ChartType>("candle");
   const [activePoint, setActivePoint] = useState<number | null>(null);
-  const [universes, setUniverses] = useState<ThemeUniverse[]>(() => buildUniverse());
+  const [universeMode, setUniverseMode] = useState<UniverseMode>("core");
+  const [universes, setUniverses] = useState<ThemeUniverse[]>(() => buildUniverse("core"));
   const [chartHistory, setChartHistory] = useState<Record<string, Partial<Record<RangeKey, ChartPoint[]>>>>({});
   const [dataStatus, setDataStatus] = useState<DataStatus>("idle");
   const [dataError, setDataError] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
   const [universeRefreshKey, setUniverseRefreshKey] = useState(0);
-  const [autoRun, setAutoRun] = useState(true);
+  const [themeRefreshStatus, setThemeRefreshStatus] = useState<DataStatus>("idle");
+  const [themeRefreshMessage, setThemeRefreshMessage] = useState("Core TOP10 universe ready");
+  const [lastThemeRefreshAt, setLastThemeRefreshAt] = useState("");
+  const [themeRefreshBlockedUntil, setThemeRefreshBlockedUntil] = useState(0);
+  const [autoRun, setAutoRun] = useState(false);
   const [paperInitialCash, setPaperInitialCash] = useState(defaultPaperCash);
   const [paperCashInput, setPaperCashInput] = useState(String(defaultPaperCash));
   const [cash, setCash] = useState(defaultPaperCash);
@@ -1340,26 +1365,48 @@ export default function StockDashboard() {
     const controller = new AbortController();
 
     async function loadThemeUniverse() {
+      setThemeRefreshStatus("loading");
+      const fallbackUniverses = buildUniverse(universeMode);
+      const fallbackLabel = universeMode === "all" ? "extended" : "core";
+      const applyLocalUniverse = (reason: string) => {
+        setUniverses(fallbackUniverses);
+        setThemeRefreshStatus("ready");
+        setLastThemeRefreshAt(new Date().toLocaleTimeString("ko-KR"));
+        setThemeRefreshMessage(`${reason}, using local ${fallbackLabel} universe`);
+      };
+
       try {
-        const response = await fetch(`${apiBaseUrl}/universe/themes`, { signal: controller.signal });
+        const response = await fetch(`${apiBaseUrl}/universe/themes?mode=${universeMode}`, { signal: controller.signal });
 
         if (!response.ok) {
+          applyLocalUniverse("Theme API failed");
           setStatusMessage("테마 API 연결 실패, 샘플 유니버스 유지");
           return;
         }
 
         const payload = (await response.json()) as ThemeUniverseApiResponse;
-        const nextUniverses = universeFromApi(payload);
+        const nextUniverses = universeFromApi(payload, universeMode);
 
         if (!nextUniverses.length) {
+          applyLocalUniverse("Theme API returned no symbols");
           setStatusMessage("테마 API 응답 없음, 샘플 유니버스 유지");
           return;
         }
 
         setUniverses(nextUniverses);
+        setThemeRefreshStatus("ready");
+        setLastThemeRefreshAt(
+          payload.refreshed_at
+            ? new Date(payload.refreshed_at).toLocaleTimeString("ko-KR")
+            : new Date().toLocaleTimeString("ko-KR"),
+        );
+        setThemeRefreshMessage(
+          `${payload.mode === "all" || universeMode === "all" ? "Extended" : "Core"} TOP10 refreshed · ${nextUniverses.length} themes`,
+        );
         setStatusMessage("테마/시총 TOP10 갱신 완료");
       } catch {
         if (!controller.signal.aborted) {
+          applyLocalUniverse("Theme API failed");
           setStatusMessage("테마 API 연결 실패, 샘플 유니버스 유지");
         }
 
@@ -1370,7 +1417,7 @@ export default function StockDashboard() {
     loadThemeUniverse();
 
     return () => controller.abort();
-  }, [universeRefreshKey]);
+  }, [universeMode, universeRefreshKey]);
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
@@ -1415,7 +1462,7 @@ export default function StockDashboard() {
     }
 
     loadQuotes();
-    const intervalId = window.setInterval(loadQuotes, 1000);
+    const intervalId = window.setInterval(loadQuotes, quotePollingMs);
 
     return () => {
       controller.abort();
@@ -1460,7 +1507,7 @@ export default function StockDashboard() {
     }
 
     loadChartHistory();
-    const intervalId = range === "LIVE" ? window.setInterval(loadChartHistory, 1000) : null;
+    const intervalId = range === "LIVE" ? window.setInterval(loadChartHistory, liveChartPollingMs) : null;
 
     return () => {
       controller.abort();
@@ -1645,7 +1692,7 @@ export default function StockDashboard() {
   const marketFeed = [
     {
       label: "KIS",
-      value: stocks.some((stock) => stock.source) ? "1s synced" : "1s simulated",
+      value: stocks.some((stock) => stock.source) ? "10s synced" : "local ticks",
       change: dataStatus === "error" ? "ERR" : "LIVE",
       positive: dataStatus !== "error",
     },
@@ -1708,6 +1755,33 @@ export default function StockDashboard() {
     setQuery("");
     setActivePoint(null);
     setStatusMessage(`${themeName(theme, language)} TOP10 그래프 확인`);
+  }
+
+  function handleUniverseModeChange(nextMode: UniverseMode) {
+    if (nextMode === universeMode) {
+      return;
+    }
+
+    setUniverseMode(nextMode);
+    setQuery("");
+    setActivePoint(null);
+    setStatusMessage(nextMode === "core" ? "코어 테마만 표시" : "확장 테마까지 표시");
+  }
+
+  function handleUniverseRefresh() {
+    const now = Date.now();
+
+    if (now < themeRefreshBlockedUntil) {
+      const waitSeconds = Math.ceil((themeRefreshBlockedUntil - now) / 1000);
+      const message = `테마 TOP10 갱신 대기: ${waitSeconds}초 후 재시도`;
+
+      setThemeRefreshMessage(message);
+      setStatusMessage(message);
+      return;
+    }
+
+    setThemeRefreshBlockedUntil(now + themeRefreshCooldownMs);
+    setUniverseRefreshKey((currentKey) => currentKey + 1);
   }
 
   function handleChartPointerMove(event: React.PointerEvent<SVGSVGElement>) {
@@ -1832,6 +1906,19 @@ export default function StockDashboard() {
               </button>
             ) : null}
           </label>
+          <div className={styles.themeModeTabs} aria-label="Theme universe mode">
+            {(["core", "all"] as UniverseMode[]).map((mode) => (
+              <button
+                className={mode === universeMode ? styles.themeModeTabActive : styles.themeModeTab}
+                data-testid={`theme-mode-${mode}`}
+                key={mode}
+                type="button"
+                onClick={() => handleUniverseModeChange(mode)}
+              >
+                {mode === "core" ? t.themeModeCore : t.themeModeAll}
+              </button>
+            ))}
+          </div>
           <div className={styles.marketStatus}>
             <span>{t.market}</span>
             <strong>
@@ -1850,10 +1937,11 @@ export default function StockDashboard() {
             <button
               className={styles.universeRefreshButton}
               data-testid="universe-refresh"
+              disabled={themeRefreshStatus === "loading"}
               type="button"
-              onClick={() => setUniverseRefreshKey((currentKey) => currentKey + 1)}
+              onClick={handleUniverseRefresh}
             >
-              테마 갱신
+              {t.refreshThemes}
             </button>
           </div>
         </section>
@@ -1957,7 +2045,7 @@ export default function StockDashboard() {
               </div>
             </div>
             <div className={styles.sourceMeta}>
-              <span>{selectedStock.source ?? "Sample + 1s simulation"}</span>
+              <span>{selectedStock.source ?? "Sample + local ticks"}</span>
               <span data-testid="chart-source-label">{chartSourceLabel}</span>
               <span>
                 {t.updated} {formatFetchedAt(selectedStock.fetchedAt ?? latestFetchedAt, language)}
@@ -2307,6 +2395,11 @@ export default function StockDashboard() {
                 <span>{t.researchNotes}</span>
                 <strong>{marketScope === "domestic" ? "KOSPI/KOSDAQ" : "US market"}</strong>
               </div>
+            </div>
+            <div className={styles.themeRefreshMeta} data-testid="theme-refresh-meta">
+              <span>{universeMode === "core" ? "Core 6" : `Extended ${universes.length}`}</span>
+              <strong>{themeRefreshStatus === "loading" ? "Refreshing" : themeRefreshMessage}</strong>
+              <small>{lastThemeRefreshAt ? `${t.updated} ${lastThemeRefreshAt}` : "Manual refresh cooldown 60s"}</small>
             </div>
             <div className={styles.themeGrid}>
               {marketThemes.map((theme) => (

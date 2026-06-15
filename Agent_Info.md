@@ -23,7 +23,7 @@ automated trading assistant.
   MongoDB latest quote persistence, quote history persistence, intraday chart aggregation, and
   latest-or-refresh API helper
 - `backend/app/universe.py`: curated first-pass theme universe API data with theme-level top
-  market-cap top 10 metadata for dashboard strategy experiments
+  market-cap top 5 metadata for dashboard strategy experiments
 - `backend/tests/test_main.py`: backend endpoint tests
 - `backend/Dockerfile`: production backend container image
 - `frontend/Dockerfile`: production Next.js standalone container image
@@ -65,7 +65,8 @@ automated trading assistant.
   domestic semiconductors, domestic defense, AI semiconductors, AI platforms, US inverse ETFs, and
   Korea inverse ETFs. `mode=all` or `include_extended=true` returns the extended research universe
   including quantum computing, power/grid, data centers, nuclear, robotics/humanoids, defense,
-  aerospace/space, biotech, blockchain, and inverse ETF themes.
+  aerospace/space, biotech, blockchain, and inverse ETF themes. Each theme response is trimmed to
+  its top 5 holdings.
 - The frontend dashboard now includes a denser brokerage-style candlestick chart, 10-second quote
   polling with local simulated ticks, a configurable paper-trading account defaulting to 100,000,000
   KRW with reset, and a theme-rotation automation panel.
@@ -78,7 +79,7 @@ automated trading assistant.
   hour/minute, mid ranges include short year/month/day and hour/minute, and long ranges show dates.
 - Chart ranges separate live market hours from 1-day history: `LIVE` renders the regular trading
   session, while `1D` renders a 24-hour window with dark-theme chart styling.
-- During 1-second simulated ticks, `LIVE` appends new short-interval candles, while `1D` keeps its
+- During local simulated ticks, `LIVE` appends new short-interval candles, while `1D` keeps its
   24-hour candle count fixed and updates only the active final candle's OHLC/volume.
 - Frontend charts now prefer real `/quotes/kis/history` candles when enough history is available,
   show the chart source and candle count, and only use the seeded sample series as an explicit
@@ -87,7 +88,7 @@ automated trading assistant.
 - The paper-trading simulation uses Korea Investment Securities fee assumptions: BanKIS domestic
   online KRX commission at 0.0140527%, and US online overseas trading at 0.25% buy / 0.25206% sell
   including the US SEC sell fee.
-- Paper-trading orders allocate the configured account balance across the target top 5, buy only
+- Paper-trading orders allocate the configured account balance across the target top 3, buy only
   whole shares, and reuse leftover cash to add shares to the lowest-invested target so the portfolio
   stays as evenly distributed as whole-share constraints allow.
 - The rotation strategy only enters when the top-ranked theme is in an uptrend, using a composite
@@ -103,4 +104,4 @@ automated trading assistant.
   toggle before the paper-trading loop can place simulated orders.
 - The automation guardrails reduce churn through stricter theme MA rollover confirmation instead of
   time locks: rollover requires fast/slow MA spread weakness, fast MA decline, weak stock score, and
-  at least 7 of the theme top 10 showing the same deterioration.
+  at least 4 of the theme top 5 showing the same deterioration.

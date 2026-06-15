@@ -173,7 +173,8 @@ const usdKrw = 1380;
 const kisDomesticOnlineCommissionRate = 0.000140527;
 const kisUsOnlineCommissionRate = 0.0025;
 const usSecSellFeeRate = 0.0000206;
-const portfolioTargetSize = 5;
+const themeHoldingLimit = 5;
+const portfolioTargetSize = 3;
 const positionStopLossRate = 0.02;
 const sidecarDrawdownRate = 0.05;
 const minThemeMomentumForEntry = 0.12;
@@ -204,7 +205,7 @@ const copy = {
     refreshQuotes: "Refresh quotes",
     themeModeCore: "Core",
     themeModeAll: "Extended",
-    refreshThemes: "Refresh TOP10",
+    refreshThemes: "Refresh TOP5",
     updated: "Updated",
     deskMode: "Trading desk",
     rangeMove: "Range move",
@@ -238,10 +239,10 @@ const copy = {
     candle: "Candles",
     line: "Line",
     point: "Point",
-    researchNotes: "Theme TOP10",
+    researchNotes: "Theme TOP5",
     portfolioSignalPanel: "Auto strategy",
     sentiment: "Momentum",
-    topSignals: "Target TOP5",
+    topSignals: "Target TOP3",
     noMatches: "No matching symbols",
     reset: "Reset",
     start: "Run",
@@ -278,7 +279,7 @@ const copy = {
     refreshQuotes: "\uC2DC\uC138 \uC0C8\uB85C\uACE0\uCE68",
     themeModeCore: "\uCF54\uC5B4",
     themeModeAll: "\uD655\uC7A5",
-    refreshThemes: "\uD14C\uB9C8 TOP10 \uAC31\uC2E0",
+    refreshThemes: "\uD14C\uB9C8 TOP5 \uAC31\uC2E0",
     updated: "\uAC31\uC2E0",
     deskMode: "\uD2B8\uB808\uC774\uB529 \uB370\uC2A4\uD06C",
     rangeMove: "\uAE30\uAC04 \uB4F1\uB77D",
@@ -312,10 +313,10 @@ const copy = {
     candle: "\uBD09\uCC28\uD2B8",
     line: "\uC120\uCC28\uD2B8",
     point: "\uC9C0\uC810",
-    researchNotes: "\uD14C\uB9C8 TOP10",
+    researchNotes: "\uD14C\uB9C8 TOP5",
     portfolioSignalPanel: "\uC790\uB3D9\uB9E4\uB9E4 \uC804\uB7B5",
     sentiment: "\uBAA8\uBA58\uD140",
-    topSignals: "\uD22C\uC790 TOP5",
+    topSignals: "\uD22C\uC790 TOP3",
     noMatches: "\uAC80\uC0C9 \uACB0\uACFC \uC5C6\uC74C",
     reset: "\uCD08\uAE30\uD654",
     start: "\uC2E4\uD589",
@@ -735,7 +736,7 @@ function buildSeries(price: number, change: number, seed: number): Record<RangeK
 function buildUniverse(mode: UniverseMode = "core"): ThemeUniverse[] {
   return seededThemeUniverse.filter((theme) => mode === "all" || coreThemeIds.has(theme.id)).map((theme) => ({
     ...theme,
-    stocks: theme.stocks.map((row, index) => {
+    stocks: theme.stocks.slice(0, themeHoldingLimit).map((row, index) => {
       const [symbol, name, localName, market, price, change, marketCap] = row;
       const currency = theme.region === "domestic" ? "KRW" : "USD";
       const numericPrice = Number(price);
@@ -760,7 +761,7 @@ function buildUniverse(mode: UniverseMode = "core"): ThemeUniverse[] {
         marketCap: Number(marketCap),
         rank: index + 1,
         signal: numericChange >= 1 ? "Buy" : numericChange < 0 ? "Watch" : "Hold",
-        strategy: index < portfolioTargetSize ? "Theme rotation TOP5" : "Theme watchlist TOP10",
+        strategy: index < portfolioTargetSize ? "Theme rotation TOP3" : "Theme watchlist TOP5",
         series: buildSeries(numericPrice, numericChange, index + theme.id.length),
       };
     }),
@@ -801,7 +802,7 @@ function universeFromApi(payload: ThemeUniverseApiResponse, mode: UniverseMode):
     description: theme.description,
     region: theme.top_market_cap[0]?.region ?? "overseas",
     source: payload.source,
-    stocks: theme.top_market_cap.map((holding) => {
+    stocks: theme.top_market_cap.slice(0, themeHoldingLimit).map((holding) => {
       const fallback = stockFallbackPrice(holding.symbol, holding.region, holding.market_cap_rank);
       const price = fallback.price;
       const change = fallback.change;
@@ -825,7 +826,7 @@ function universeFromApi(payload: ThemeUniverseApiResponse, mode: UniverseMode):
         marketCap: fallback.marketCap,
         rank: holding.market_cap_rank,
         signal: stockSignal(change),
-        strategy: holding.market_cap_rank <= portfolioTargetSize ? "API theme rotation TOP5" : "API theme TOP10",
+        strategy: holding.market_cap_rank <= portfolioTargetSize ? "API theme rotation TOP3" : "API theme TOP5",
         series: buildSeries(price, change, holding.market_cap_rank + theme.key.length),
       };
     }),
@@ -1064,7 +1065,9 @@ function momentumScore(stock: Stock) {
 }
 
 function themeMomentum(theme: ThemeUniverse) {
-  return theme.stocks.slice(0, 10).reduce((sum, stock) => sum + momentumScore(stock), 0) / 10;
+  const leaders = theme.stocks.slice(0, themeHoldingLimit);
+
+  return leaders.reduce((sum, stock) => sum + momentumScore(stock), 0) / Math.max(leaders.length, 1);
 }
 
 function isStockMovingAverageBroken(stock: Stock) {
@@ -1088,7 +1091,7 @@ function isThemeUptrend(theme: ThemeUniverse) {
 
 function isMovingAverageRollingOver(theme: ThemeUniverse) {
   const momentum = themeMomentum(theme);
-  const rolloverSignals = theme.stocks.slice(0, 10).map((stock) => {
+  const rolloverSignals = theme.stocks.slice(0, themeHoldingLimit).map((stock) => {
     const trend = stockMovingAverageTrend(stock);
 
     const fastBelowSlow = trend.fast < trend.slow * (1 - maRolloverSpreadBuffer);
@@ -1098,11 +1101,11 @@ function isMovingAverageRollingOver(theme: ThemeUniverse) {
     return fastBelowSlow && fastClearlyFalling && scoreClearlyWeak;
   });
 
-  return momentum < 0 && rolloverSignals.filter(Boolean).length >= 7;
+  return momentum < 0 && rolloverSignals.filter(Boolean).length >= Math.ceil(rolloverSignals.length * 0.7);
 }
 
 function themeSparklinePath(theme: ThemeUniverse, width = 142, height = 34) {
-  const points = theme.stocks.slice(0, 10).map((stock) => momentumScore(stock));
+  const points = theme.stocks.slice(0, themeHoldingLimit).map((stock) => momentumScore(stock));
   const min = Math.min(...points);
   const max = Math.max(...points);
   const spread = max - min || 1;
@@ -1291,7 +1294,7 @@ export default function StockDashboard() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [universeRefreshKey, setUniverseRefreshKey] = useState(0);
   const [themeRefreshStatus, setThemeRefreshStatus] = useState<DataStatus>("idle");
-  const [themeRefreshMessage, setThemeRefreshMessage] = useState("Core TOP10 universe ready");
+  const [themeRefreshMessage, setThemeRefreshMessage] = useState("Core TOP5 universe ready");
   const [lastThemeRefreshAt, setLastThemeRefreshAt] = useState("");
   const [themeRefreshBlockedUntil, setThemeRefreshBlockedUntil] = useState(0);
   const [autoRun, setAutoRun] = useState(false);
@@ -1401,9 +1404,9 @@ export default function StockDashboard() {
             : new Date().toLocaleTimeString("ko-KR"),
         );
         setThemeRefreshMessage(
-          `${payload.mode === "all" || universeMode === "all" ? "Extended" : "Core"} TOP10 refreshed · ${nextUniverses.length} themes`,
+          `${payload.mode === "all" || universeMode === "all" ? "Extended" : "Core"} TOP5 refreshed · ${nextUniverses.length} themes`,
         );
-        setStatusMessage("테마/시총 TOP10 갱신 완료");
+        setStatusMessage("테마/시총 TOP5 갱신 완료");
       } catch {
         if (!controller.signal.aborted) {
           applyLocalUniverse("Theme API failed");
@@ -1595,7 +1598,7 @@ export default function StockDashboard() {
         const investedCash = nextPositions.reduce((sum, position) => sum + position.entryValue, 0);
 
         if (!nextPositions.length) {
-          setStatusMessage("배정 현금으로 1주 이상 매수 가능한 TOP5 종목이 없습니다");
+          setStatusMessage("배정 현금으로 1주 이상 매수 가능한 TOP3 종목이 없습니다");
           return;
         }
 
@@ -1603,12 +1606,12 @@ export default function StockDashboard() {
         setPositions(nextPositions);
         setSidecarAlert("");
         setTradeLog((log) => [
-          `${new Date().toLocaleTimeString("ko-KR")} BUY ${themeName(activeTheme, language)} TOP5 fee ${formatMoney(
+          `${new Date().toLocaleTimeString("ko-KR")} BUY ${themeName(activeTheme, language)} TOP3 fee ${formatMoney(
             nextPositions.reduce((sum, position) => sum + position.entryFee, 0),
           )}`,
           ...log.slice(0, 5),
         ]);
-        setStatusMessage(`${themeName(activeTheme, language)} TOP5 자동 진입`);
+        setStatusMessage(`${themeName(activeTheme, language)} TOP3 자동 진입`);
         return;
       }
 
@@ -1754,7 +1757,7 @@ export default function StockDashboard() {
     setSelectedSymbol(firstStock.symbol);
     setQuery("");
     setActivePoint(null);
-    setStatusMessage(`${themeName(theme, language)} TOP10 그래프 확인`);
+    setStatusMessage(`${themeName(theme, language)} TOP5 그래프 확인`);
   }
 
   function handleUniverseModeChange(nextMode: UniverseMode) {
@@ -1773,7 +1776,7 @@ export default function StockDashboard() {
 
     if (now < themeRefreshBlockedUntil) {
       const waitSeconds = Math.ceil((themeRefreshBlockedUntil - now) / 1000);
-      const message = `테마 TOP10 갱신 대기: ${waitSeconds}초 후 재시도`;
+      const message = `테마 TOP5 갱신 대기: ${waitSeconds}초 후 재시도`;
 
       setThemeRefreshMessage(message);
       setStatusMessage(message);
@@ -1872,7 +1875,7 @@ export default function StockDashboard() {
               type="button"
               aria-label="Settings"
               onClick={() => {
-                setStatusMessage("설정: 1초 갱신 / TOP5 모의투자 / 2% 손절 / 5% 사이드카");
+                setStatusMessage("설정: 10초 갱신 / TOP3 모의투자 / 2% 손절 / 5% 사이드카");
               }}
             >
               <Settings size={18} />
@@ -2311,11 +2314,11 @@ export default function StockDashboard() {
                 </div>
               ) : null}
               <div className={styles.ruleList}>
-                <span>MA 이탈: 괴리 0.4% + 하락 0.25% + 약세 7/10</span>
+                <span>MA 이탈: 괴리 0.4% + 하락 0.25% + 약세 4/5</span>
                 <span>{t.activeTheme}: {activeTheme ? themeName(activeTheme, language) : "-"}</span>
                 <span>1위 테마 상승추세: {activeThemeIsUptrend ? "통과" : "대기"}</span>
                 <span>{tradingMarketLabel}</span>
-                <span>TOP5 고르게 분산 · 정수 1주 단위</span>
+                <span>TOP3 고르게 분산 · 정수 1주 단위</span>
                 <span>{t.stopLoss}</span>
                 <span>거래비용 {tradingCostText}</span>
                 <span>{t.exitRule}</span>

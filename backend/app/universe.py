@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 Region = Literal["domestic", "overseas"]
 ThemeMode = Literal["core", "all"]
+TOP_HOLDINGS_PER_THEME = 5
 
 
 class UniverseHolding(BaseModel):
@@ -53,6 +54,12 @@ _CORE_THEME_KEYS = (
 def _normalize_theme_mode(mode: str) -> ThemeMode:
     normalized = mode.strip().lower()
     return "all" if normalized == "all" else "core"
+
+
+def _limit_theme_holdings(theme: ThemeUniverse) -> ThemeUniverse:
+    return theme.model_copy(
+        update={"top_market_cap": theme.top_market_cap[:TOP_HOLDINGS_PER_THEME]}
+    )
 
 
 THEME_UNIVERSE: tuple[ThemeUniverse, ...] = (
@@ -1484,6 +1491,8 @@ def get_theme_universe(
         selected.extend(
             theme for theme in THEME_UNIVERSE if theme.key not in set(_CORE_THEME_KEYS)
         )
+
+    selected = [_limit_theme_holdings(theme) for theme in selected]
 
     return ThemeUniverseResponse(
         count=len(selected),

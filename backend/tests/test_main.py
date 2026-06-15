@@ -236,7 +236,7 @@ def test_read_theme_universe(client: TestClient) -> None:
     assert themes_by_key["korea-semiconductors"]["top_market_cap"][0]["symbol"] == "005930"
     assert themes_by_key["us-inverse-etfs"]["top_market_cap"][0]["symbol"] == "SH"
     assert themes_by_key["korea-inverse-etfs"]["top_market_cap"][1]["symbol"] == "252670"
-    assert len(themes_by_key["korea-inverse-etfs"]["top_market_cap"]) == 10
+    assert len(themes_by_key["korea-inverse-etfs"]["top_market_cap"]) == 5
 
 
 def test_read_theme_universe_with_all_mode_and_extended(client: TestClient) -> None:
@@ -247,6 +247,7 @@ def test_read_theme_universe_with_all_mode_and_extended(client: TestClient) -> N
     assert body["count"] == 17
     assert body["themes"][0]["key"] == "korea-semiconductors"
     assert body["themes"][1]["key"] == "domestic-defense"
+    assert all(len(theme["top_market_cap"]) == 5 for theme in body["themes"])
 
     response = client.get("/universe/themes?include_extended=true")
     assert response.status_code == 200

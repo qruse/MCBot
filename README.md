@@ -110,6 +110,33 @@ Stop the stack:
 docker compose down
 ```
 
+## Cloudflare Workers (dashboard prototype)
+
+The current dashboard uses sample data and does not call the Python backend. Deploy the
+dashboard as static assets on Workers; this deployment does not include FastAPI, live market
+data, or automated trading.
+
+Connect this repository to Workers Builds and use:
+
+| Setting | Value |
+| --- | --- |
+| Production branch | `main` |
+| Root directory | Repository root (leave blank) |
+| Build command | `npm ci --prefix frontend && CLOUDFLARE_BUILD=1 npm run build --prefix frontend` |
+| Deploy command | `npx wrangler deploy` |
+| Worker name | `mcbot` |
+
+The Worker name must match the project created in Cloudflare. If its name differs, use
+`npx wrangler deploy --name YOUR_EXISTING_WORKER_NAME` as the deploy command instead.
+
+The Cloudflare build exports the frontend to `frontend/out`; `wrangler.jsonc` points Workers
+to that directory. Configure the build command explicitly in Workers Builds, which does not
+use Wrangler's custom build command. For local CLI deployments from the repository root,
+`npx wrangler deploy` runs the custom build automatically.
+
+Regular `npm run build` and Docker builds still produce the Next.js standalone server. No
+Cloudflare API token needs to be committed to this repository.
+
 ## Safety Notes
 
 Automated trading can create real financial risk. Live trading features should be added only after

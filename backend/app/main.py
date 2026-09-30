@@ -21,6 +21,7 @@ from app.market_data import (
     start_market_data_scheduler,
     stop_market_data_scheduler,
 )
+from app.paper import api as paper_api
 from app.toss import router as toss_router
 from app.universe import ThemeUniverseResponse, get_theme_universe
 
@@ -34,12 +35,14 @@ class HealthResponse(BaseModel):
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    await paper_api.start()
     if os.getenv("MARKET_DATA_PROVIDER", "toss") == "kis":
         await start_market_data_scheduler()
 
     try:
         yield
     finally:
+        await paper_api.stop()
         await stop_market_data_scheduler()
 
 
@@ -64,9 +67,11 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Toss-State", "Retry-After"],
 )
 
 app.include_router(toss_router)
+app.include_router(paper_api.router)
 
 
 @app.get("/")
@@ -79,7 +84,10 @@ def read_root() -> dict[str, str]:
 
 @app.get("/health", response_model=HealthResponse)
 def read_health() -> HealthResponse:
-    database = ping_mongo()
+    database = ping_mongo() if os.getenv("MARKET_DATA_PROVIDER", "toss") == "kis" else {
+        "status": "ok" if paper_api.service and not paper_api.service.last_error else "degraded",
+        "database": "sqlite", "message": "Local paper storage; no provider health request.",
+    }
 
     return HealthResponse(
         status="ok" if database["status"] == "ok" else "degraded",

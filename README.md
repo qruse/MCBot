@@ -15,14 +15,18 @@ The repository currently contains the first development environment setup:
 - `artifacts/`: generated deliverables
 - `tmps/`: temporary files
 
-The dashboard uses Toss Securities market data with local paper trading. The existing theme
-rotation strategy selects three stocks, applies risk controls, and records session profit every
-five seconds after an explicit start. Price charts and synthetic realtime ticks are removed.
+The homepage is a Korean dashboard for server-owned paper sessions and hourly Codex strategy
+research. FastAPI owns decimal accounting, risk checks, a durable SQLite ledger and a frozen
+reference strategy. Codex reads versioned context and submits expiring proposals through the local
+research exchange; there is no LLM API integration or real brokerage order execution.
 
-Broker requests are independent of profit sampling: batch prices refresh every 30 seconds, FX
-is cached for five minutes, and strategy history is loaded only during automation. Global request
-pacing, shared caches, and cooldowns protect the API. Credentials are stored only in backend/.env.
-See [AGENTS.md](AGENTS.md) for the consolidated provider setup, limits, and current behavior.
+Start explicitly enables read-only market collection. Observer mode records research proposals;
+adaptive paper mode accepts only validated theme/cash plans. Reload preserves state, and backend
+restart restores paused. The dashboard shows profit, active policy, expiry, research receipts,
+preregistered hypotheses and same-input reference performance. New strategy promotion remains gated.
+
+See [AGENTS.md](AGENTS.md) for the canonical implementation status, commands, research workflow,
+limits and hourly operating instructions. Runtime data and SQLite files are ignored.
 
 ## Planned Features
 
@@ -75,7 +79,7 @@ TOSS_CLIENT_SECRET=
 ```powershell
 cd frontend
 npm install
-npm run dev -- --port 3001
+node node_modules/next/dist/bin/next dev --hostname 127.0.0.1 --port 3001
 ```
 
 Open `http://localhost:3001`.
@@ -95,8 +99,10 @@ cd backend
 
 cd ..\\frontend
 npm run lint
+# Only for UI/session-flow changes, with the dev server running on port 3001:
+npm run test:e2e
+# Only for production, routing, dependency, or build configuration changes:
 npm run build
-npm audit
 ```
 
 ## Docker Compose

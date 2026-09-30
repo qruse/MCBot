@@ -1,54 +1,51 @@
 import { expect, test } from "@playwright/test";
 
-test("paper session records profit every five seconds without price charts or rapid broker polling", async ({ page }) => {
-  let priceCalls = 0;
-  let strategyCalls = 0;
-  let failed = false;
-  await page.clock.install();
-  await page.route(/\/universe\/themes/, route => route.fulfill({ json: { source: "fixture", themes: [], count: 0, notes: [] } }));
-  await page.route(/\/brokers\/toss\/status$/, route => route.fulfill({ json: { configured: true, execution: "local-paper" } }));
-  await page.route(/\/brokers\/toss\/connection$/, route => route.fulfill({ json: { accounts: [{ account_seq: 1, type: "BROKERAGE" }] } }));
-  await page.route(/\/brokers\/toss\/prices\?/, route => {
-    priceCalls++;
-    const symbols = new URL(route.request().url()).searchParams.get("symbols")!.split(",");
-    return route.fulfill({ status: failed ? 503 : 200, json: failed ? { detail: "Toss calls paused during cooldown. Retry later." } : {
-      data: symbols.map(symbol => ({ symbol, lastPrice: "100", currency: /^\d/.test(symbol) ? "KRW" : "USD", timestamp: new Date().toISOString() })),
-      usd_krw: "1380.5", source: "Toss Securities Open API",
-      synced_at: new Date().toISOString(),
-    } });
+test.afterAll(async ({ request }) => {
+  await request.post("http://127.0.0.1:8011/__test__/shutdown");
+});
+
+test("paper controls use one server session across reload and tabs", async ({ page, context }) => {
+  const errors: string[] = [];
+  const brokerCalls: string[] = [];
+  context.on("weberror", error => errors.push(error.error().message));
+  await context.route("**/paper/**", async route => {
+    const url = new URL(route.request().url());
+    const response = await route.fetch({ url: "http://127.0.0.1:8011" + url.pathname + url.search });
+    await route.fulfill({ response });
   });
-  await page.route(/\/brokers\/toss\/strategy\//, route => {
-    strategyCalls++;
-    const candles = Array.from({ length: 120 }, (_, i) => ({ timestamp: new Date(Date.now() - (120 - i) * 60000).toISOString(), openPrice: "100", highPrice: "100", lowPrice: "100", closePrice: "100", volume: "1000" }));
-    return route.fulfill({ json: { minute: candles, daily: candles, synced_at: new Date().toISOString() } });
+  await context.route("**/brokers/**", route => {
+    brokerCalls.push(route.request().url());
+    return route.abort();
   });
   await page.goto("/");
-  const start = page.getByTestId("auto-run-toggle");
-  await expect(start).toBeEnabled();
-  await expect(page.getByTestId("profit-empty")).toBeVisible();
+  await page.getByRole("combobox", { name: "시세 데이터" }).selectOption("demo");
+  await page.getByRole("button", { name: "설정 저장" }).click();
+  await page.getByRole("button", { name: "모의매매 시작", exact: true }).click();
+  await expect(page.getByTestId("profit-chart")).toBeVisible({ timeout: 12000 });
+  await expect(page.getByTestId("strategy-library")).toContainText("테마 추세");
+  await expect(page.getByTestId("standing-candidate")).toHaveCount(3);
+  await expect(page.getByTestId("standing-candidate").first()).not.toBeVisible();
+  const chart = await page.getByTestId("performance-panel").boundingBox();
+  const candidates = await page.getByTestId("candidates").boundingBox();
+  expect(chart!.y).toBeLessThan(candidates!.y);
+  await page.reload();
+  await expect(page.getByTestId("session-lifecycle")).toHaveText("실행 중");
+  const second = await context.newPage();
+  await second.goto("/");
+  await second.getByRole("button", { name: "시뮬레이션 정지" }).click();
+  await expect(page.getByTestId("session-lifecycle")).toHaveText("일시정지", { timeout: 10000 });
+  await expect(page.getByTestId("chart-gap")).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  expect(brokerCalls).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
+test("backend outage cannot create a browser session or a demo fallback", async ({ page }) => {
+  await page.route("**/paper/**", route => route.abort());
+  await page.goto("/");
+  await expect(page.getByText("서버에 연결할 수 없습니다. 마지막으로 받은 정보를 표시합니다.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "모의매매 시작", exact: true })).toHaveCount(0);
   await expect(page.getByTestId("profit-chart")).toHaveCount(0);
-  await expect(page.getByRole("img", { name: /price chart/ })).toHaveCount(0);
-  expect(strategyCalls).toBe(0);
-  await start.check();
-  await expect(page.getByTestId("profit-samples")).toContainText("1 samples");
-  await page.clock.fastForward(5000);
-  await expect(page.getByTestId("profit-samples")).toContainText("2 samples");
-  await start.uncheck();
-  await page.clock.fastForward(10000);
-  await expect(page.getByTestId("profit-samples")).toContainText("2 samples");
-  expect(priceCalls).toBe(1);
-  await start.check();
-  await page.clock.fastForward(5000);
-  await expect(page.getByTestId("profit-samples")).toContainText("3 samples");
-  await page.screenshot({ path: "../artifacts/toss-paper-profit.png", fullPage: true });
-  failed = true;
-  await page.getByRole("button", { name: "Refresh quotes", exact: true }).click();
-  await expect(page.getByText("Toss calls paused during cooldown. Retry later.", { exact: true }).first()).toBeVisible();
-  await page.clock.fastForward(5000);
-  await expect(page.getByTestId("profit-samples")).toContainText("3 samples");
-  await start.uncheck(); // Stop remains available during broker errors.
-  await page.getByTestId("simulation-reset").click();
-  await expect(start).not.toBeChecked();
-  await expect(page.getByTestId("profit-chart")).toHaveCount(0);
-  await expect(page.getByTestId("profit-empty")).toBeVisible();
+  await expect(page.getByRole("button", { name: "다시 연결" })).toBeVisible();
 });

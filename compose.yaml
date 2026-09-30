@@ -4,6 +4,12 @@ services:
       context: ./backend
     environment:
       ROOT_PATH: /api
+      PAPER_DB_PATH: /data/sessions.sqlite3
+      PAPER_EXCHANGE_PATH: /exchange
+      PAPER_TRUST_LOCAL_PROXY: "true"
+    volumes:
+      - paper_data:/data
+      - ./runtime/agent_exchange:/exchange
     env_file:
       - path: ./backend/.env
         required: false
@@ -35,9 +41,12 @@ services:
   nginx:
     image: nginx:1.27-alpine
     ports:
-      - "8080:80"
+      - "127.0.0.1:8080:80"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
       - frontend
       - backend
+
+volumes:
+  paper_data:

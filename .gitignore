@@ -30,3 +30,10 @@ tmps/*
 Thumbs.db
 .vscode/
 .idea/
+# Local provider throttle state contains no credentials and must not be committed.
+.toss-throttle.json
+.toss-throttle.tmp
+runtime/
+backend/.paper/
+frontend/test-results/
+frontend/tsconfig.tsbuildinfo

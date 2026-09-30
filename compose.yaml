@@ -4,6 +4,9 @@ services:
       context: ./backend
     environment:
       ROOT_PATH: /api
+    env_file:
+      - path: ./backend/.env
+        required: false
     expose:
       - "8000"
     healthcheck:

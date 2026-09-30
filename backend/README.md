@@ -18,19 +18,9 @@ python -m ruff check .
 python -m pytest
 ```
 
-## Endpoints
+## Integration
 
-- `GET /`: backend status message
-- `GET /health`: health-check response
-- `GET /docs`: FastAPI Swagger documentation
-- `GET /quotes/kis/watchlist`: latest KIS watchlist quotes persisted by the background MongoDB
-  refresh scheduler
-- `GET /quotes/kis/history/{symbol}?range=LIVE|1D|1W|1M|1Y|5Y|ALL`: chart-ready OHLC candles.
-  `LIVE` and `1D` aggregate MongoDB scheduled quote history; longer ranges download KIS chart
-  data.
-
-## Market Data Scheduler
-
-The backend starts a background KIS quote refresh loop during FastAPI startup. It refreshes the
-watchlist every `MARKET_DATA_REFRESH_SECONDS` seconds, stores the latest quote per symbol in
-`market_quote_latest`, and appends each refresh point to `market_quote_history`.
+Toss Securities is the default read-only market data provider. Orders run in the browser's local
+paper account. See [the consolidated project reference](../AGENTS.md) for endpoint details,
+credential setup, caching, rate controls, and limitations. Legacy KIS endpoints remain available;
+KIS startup work requires explicit `MARKET_DATA_PROVIDER=kis` configuration.

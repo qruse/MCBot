@@ -21,6 +21,7 @@ from app.market_data import (
     start_market_data_scheduler,
     stop_market_data_scheduler,
 )
+from app.toss import router as toss_router
 from app.universe import ThemeUniverseResponse, get_theme_universe
 
 
@@ -33,7 +34,8 @@ class HealthResponse(BaseModel):
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    await start_market_data_scheduler()
+    if os.getenv("MARKET_DATA_PROVIDER", "toss") == "kis":
+        await start_market_data_scheduler()
 
     try:
         yield
@@ -63,6 +65,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(toss_router)
 
 
 @app.get("/")

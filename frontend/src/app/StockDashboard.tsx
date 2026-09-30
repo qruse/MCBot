@@ -4,9 +4,7 @@ import {
   Activity,
   Bell,
   Bot,
-  CandlestickChart,
   Home,
-  LineChart,
   Pause,
   Play,
   RefreshCw,
@@ -18,12 +16,11 @@ import {
   TrendingUp,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import styles from "./page.module.css";
 
 type RangeKey = "LIVE" | "1D" | "1W" | "1M" | "1Y" | "5Y" | "ALL";
-type ChartType = "candle" | "line";
 type MarketScope = "domestic" | "overseas";
 type Language = "en" | "ko";
 type Signal = "Buy" | "Watch" | "Hold";
@@ -56,6 +53,8 @@ type Stock = {
   low?: number | null;
   volume?: number | null;
   fetchedAt?: string;
+  strategyFetchedAt?: number;
+  fxRate?: number;
   source?: string;
   sector: string;
   sectorKo: string;
@@ -115,64 +114,17 @@ type Position = {
   entryFee: number;
 };
 
-type KisQuote = {
-  symbol: string;
-  name: string;
-  local_name: string;
-  market: string;
-  region: MarketScope;
-  currency: "USD" | "KRW";
-  price: number;
-  change_amount: number;
-  change: number;
-  open: number | null;
-  high: number | null;
-  low: number | null;
-  volume: number | null;
-  sector: string;
-  sector_ko: string;
-  source: string;
-  fetched_at: string;
-};
-
-type KisWatchlistResponse = {
-  source: string;
-  environment: string;
-  count: number;
-  data: KisQuote[];
-  errors: string[];
-};
-
-type KisHistoryCandle = {
-  symbol: string;
-  timestamp: string;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number | null;
-  source: string;
-};
-
-type KisHistoryResponse = {
-  source: string;
-  environment: string;
-  symbol: string;
-  range: RangeKey;
-  interval: string;
-  count: number;
-  data: KisHistoryCandle[];
-  errors: string[];
-};
+type TossPrice = { symbol: string; lastPrice: string; currency: "KRW" | "USD"; timestamp: string };
+type TossCandle = { timestamp: string; openPrice: string; highPrice: string; lowPrice: string; closePrice: string; volume: string };
+type ProfitPoint = { timestamp: number; value: number };
 
 type DataStatus = "idle" | "loading" | "ready" | "error";
 
-const ranges: RangeKey[] = ["LIVE", "1D", "1W", "1M", "1Y", "5Y", "ALL"];
 const defaultPaperCash = 100_000_000;
-const usdKrw = 1380;
-const kisDomesticOnlineCommissionRate = 0.000140527;
-const kisUsOnlineCommissionRate = 0.0025;
-const usSecSellFeeRate = 0.0000206;
+const usdKrw = 1380; // Sample-only fallback; connected quotes carry the actual FX rate.
+const paperDomesticCommissionRate = 0.00015;
+const paperUsCommissionRate = 0.001;
+const usSecSellFeeRate = 0; // Commission estimate only; excludes taxes and other charges.
 const themeHoldingLimit = 5;
 const portfolioTargetSize = 3;
 const positionStopLossRate = 0.02;
@@ -181,10 +133,7 @@ const minThemeMomentumForEntry = 0.12;
 const maRolloverSlopeBuffer = 0.0025;
 const maRolloverSpreadBuffer = 0.004;
 const maRolloverThemeMomentumFloor = -0.18;
-const chartPaddingLeft = 64;
-const chartPaddingRight = 82;
-const quotePollingMs = 10_000;
-const liveChartPollingMs = 5_000;
+const quotePollingMs = 30_000;
 const themeRefreshCooldownMs = 60_000;
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 
@@ -199,7 +148,7 @@ const copy = {
     market: "Market",
     open: "Open",
     dataMode: "Sample universe",
-    liveDataMode: "KIS live quotes",
+    liveDataMode: "Toss market data",
     loadingQuotes: "Loading quotes",
     quoteError: "Quote sync error",
     refreshQuotes: "Refresh quotes",
@@ -273,7 +222,7 @@ const copy = {
     market: "\uC2DC\uC7A5",
     open: "\uAC1C\uC7A5",
     dataMode: "\uC0D8\uD50C \uC720\uB2C8\uBC84\uC2A4",
-    liveDataMode: "KIS \uC2E4\uC2DC\uAC04 \uC2DC\uC138",
+    liveDataMode: "Toss market data",
     loadingQuotes: "\uC2DC\uC138 \uBD88\uB7EC\uC624\uB294 \uC911",
     quoteError: "\uC2DC\uC138 \uC5F0\uB3D9 \uC624\uB958",
     refreshQuotes: "\uC2DC\uC138 \uC0C8\uB85C\uACE0\uCE68",
@@ -625,112 +574,9 @@ const coreThemeIds = new Set([
   "korea-inverse-etfs",
 ]);
 
-function formatClock(totalMinutes: number) {
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = Math.round(totalMinutes % 60);
-
-  return `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}`;
-}
-
-function pointLabel(range: RangeKey, index: number, count: number) {
-  if (range === "LIVE") {
-    const start = 9 * 60;
-    const end = 15 * 60 + 30;
-    return formatClock(start + ((end - start) * index) / Math.max(count - 1, 1));
-  }
-
-  if (range === "1D") {
-    return `H-${Math.max(0, Math.round(24 - (24 * index) / Math.max(count - 1, 1)))}`;
-  }
-
-  if (range === "1W") {
-    return ["Mon", "Tue", "Wed", "Thu", "Fri"][Math.min(4, Math.floor((index / count) * 5))];
-  }
-
-  if (range === "1M") {
-    return `D-${count - index - 1}`;
-  }
-
-  if (range === "1Y") {
-    return `M-${Math.max(0, Math.ceil(((count - index - 1) / count) * 12))}`;
-  }
-
-  if (range === "5Y") {
-    return `Y-${Math.max(0, Math.ceil(((count - index - 1) / count) * 5))}`;
-  }
-
-  return `P-${index + 1}`;
-}
-
-function pointTimestamp(range: RangeKey, index: number, count: number) {
-  const end = new Date(2026, 5, 12, 15, 30, 0);
-  const ratio = index / Math.max(count - 1, 1);
-
-  if (range === "LIVE") {
-    const start = new Date(2026, 5, 12, 9, 0, 0).getTime();
-    return new Date(start + (end.getTime() - start) * ratio).toISOString();
-  }
-
-  if (range === "1D") {
-    const start = new Date(2026, 5, 11, 15, 30, 0).getTime();
-    return new Date(start + (end.getTime() - start) * ratio).toISOString();
-  }
-
-  const intervalMs = {
-    "1W": 60 * 60 * 1000,
-    "1M": 6 * 60 * 60 * 1000,
-    "1Y": 24 * 60 * 60 * 1000,
-    "5Y": 7 * 24 * 60 * 60 * 1000,
-    ALL: 30 * 24 * 60 * 60 * 1000,
-  }[range];
-
-  return new Date(end.getTime() - (count - index - 1) * intervalMs).toISOString();
-}
-
-function pointsForRange(range: RangeKey) {
-  return {
-    LIVE: 84,
-    "1D": 96,
-    "1W": 70,
-    "1M": 88,
-    "1Y": 96,
-    "5Y": 110,
-    ALL: 132,
-  }[range];
-}
-
-function buildSeries(price: number, change: number, seed: number): Record<RangeKey, ChartPoint[]> {
-  return Object.fromEntries(
-    ranges.map((range) => {
-      const count = pointsForRange(range);
-      const rangeBias = { LIVE: 0.18, "1D": 0.5, "1W": 1.4, "1M": 2.8, "1Y": 8.2, "5Y": 24, ALL: 38 }[
-        range
-      ];
-      const start = price / (1 + (change * rangeBias) / 100);
-      const spread = Math.max(price * 0.006, Math.abs(price - start) * 0.36, 1);
-      const points = Array.from({ length: count }, (_, index) => {
-        const ratio = index / Math.max(count - 1, 1);
-        const trend = start + (price - start) * ratio;
-        const cycle = Math.sin(index * 0.34 + seed) * spread + Math.sin(index * 0.09 + seed * 0.7) * spread * 0.55;
-        const close = index === count - 1 ? price : Math.max(1, trend + cycle);
-        const open = index === 0 ? close - spread * 0.16 : Math.max(1, trend - cycle * 0.22);
-        const wick = Math.max(Math.abs(close - open) * 0.62, spread * 0.42);
-
-        return {
-          label: pointLabel(range, index, count),
-          timestamp: pointTimestamp(range, index, count),
-          value: close,
-          open,
-          high: Math.max(open, close) + wick,
-          low: Math.max(0.01, Math.min(open, close) - wick),
-          close,
-          volume: Math.round(250000 + Math.abs(Math.sin(index + seed)) * 2200000),
-        };
-      });
-
-      return [range, points];
-    }),
-  ) as Record<RangeKey, ChartPoint[]>;
+function buildSeries(...unused: number[]): Record<RangeKey, ChartPoint[]> {
+  void unused;
+  return { LIVE: [], "1D": [], "1W": [], "1M": [], "1Y": [], "5Y": [], ALL: [] };
 }
 
 function buildUniverse(mode: UniverseMode = "core"): ThemeUniverse[] {
@@ -845,61 +691,8 @@ function stockSignal(change: number): Signal {
   return "Hold";
 }
 
-function pointFromHistoryCandle(candle: KisHistoryCandle): ChartPoint {
-  return {
-    label: candle.timestamp,
-    timestamp: candle.timestamp,
-    source: candle.source,
-    value: candle.close,
-    open: candle.open,
-    high: candle.high,
-    low: candle.low,
-    close: candle.close,
-    volume: candle.volume ?? 0,
-  };
-}
-
-function padDatePart(value: number) {
-  return String(value).padStart(2, "0");
-}
-
-function formatChartPointLabel(point: ChartPoint, range: RangeKey, _language: Language) {
-  void _language;
-
-  if (!point.timestamp) {
-    return point.label;
-  }
-
-  const date = new Date(point.timestamp);
-
-  if (Number.isNaN(date.getTime())) {
-    return point.label;
-  }
-
-  const year = date.getFullYear();
-  const shortYear = padDatePart(year % 100);
-  const month = padDatePart(date.getMonth() + 1);
-  const day = padDatePart(date.getDate());
-  const hour = padDatePart(date.getHours());
-  const minute = padDatePart(date.getMinutes());
-
-  if (range === "LIVE" || range === "1D") {
-    return `${month}/${day} ${hour}:${minute}`;
-  }
-
-  if (range === "1W" || range === "1M") {
-    return `${shortYear}/${month}/${day} ${hour}:${minute}`;
-  }
-
-  return `${year}/${month}/${day}`;
-}
-
 function stockName(stock: Stock, language: Language) {
   return language === "ko" ? stock.localName : stock.name;
-}
-
-function sectorName(stock: Stock, language: Language) {
-  return language === "ko" ? stock.sectorKo : stock.sector;
 }
 
 function themeName(theme: ThemeUniverse, language: Language) {
@@ -927,23 +720,23 @@ function formatPrice(stock: Stock) {
 }
 
 function priceToKrw(stock: Stock) {
-  return stock.currency === "KRW" ? stock.price : stock.price * usdKrw;
+  return stock.currency === "KRW" ? stock.price : stock.price * (stock.fxRate ?? usdKrw);
 }
 
 function buyCostRate(stock: Stock) {
-  return stock.region === "domestic" ? kisDomesticOnlineCommissionRate : kisUsOnlineCommissionRate;
+  return stock.region === "domestic" ? paperDomesticCommissionRate : paperUsCommissionRate;
 }
 
 function sellCostRate(stock: Stock) {
-  return stock.region === "domestic" ? kisDomesticOnlineCommissionRate : kisUsOnlineCommissionRate + usSecSellFeeRate;
+  return stock.region === "domestic" ? paperDomesticCommissionRate : paperUsCommissionRate + usSecSellFeeRate;
 }
 
 function tradingCostLabel(scope: MarketScope) {
   if (scope === "domestic") {
-    return `국내 ${formatRate(kisDomesticOnlineCommissionRate)} / 편도`;
+    return `KR ${formatRate(paperDomesticCommissionRate)} / side`;
   }
 
-  return `미국 매수 ${formatRate(kisUsOnlineCommissionRate)} · 매도 ${formatRate(kisUsOnlineCommissionRate + usSecSellFeeRate)}`;
+  return `US buy ${formatRate(paperUsCommissionRate)} · sell ${formatRate(paperUsCommissionRate + usSecSellFeeRate)}`;
 }
 
 function formatRate(rate: number) {
@@ -1002,26 +795,6 @@ function buildBalancedPaperPositions(targetStocks: Stock[], availableCash: numbe
     }));
 }
 
-function formatCompactNumber(value: number | null | undefined) {
-  if (!value) {
-    return "-";
-  }
-
-  return value.toLocaleString("ko-KR", { maximumFractionDigits: 0 });
-}
-
-function formatFetchedAt(value: string | undefined, language: Language) {
-  if (!value) {
-    return "-";
-  }
-
-  return new Intl.DateTimeFormat(language === "ko" ? "ko-KR" : "en-US", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  }).format(new Date(value));
-}
-
 function movingAverage(points: ChartPoint[], windowSize: number) {
   const slice = points.slice(-windowSize);
   return slice.reduce((sum, point) => sum + point.close, 0) / Math.max(slice.length, 1);
@@ -1056,7 +829,16 @@ function stockLongTrendScore(stock: Stock) {
   return monthTrend.score * 0.45 + yearTrend.score * 0.55;
 }
 
+function quoteFresh(stock: Stock) {
+  return Boolean(stock.source && stock.fetchedAt && Date.now() - Date.parse(stock.fetchedAt) < 90_000);
+}
+
+function strategyReady(stock: Stock) {
+  return quoteFresh(stock) && Boolean(stock.strategyFetchedAt && Date.now() - stock.strategyFetchedAt < 1_200_000) && stock.series.LIVE.length >= 26 && stock.series["1Y"].length >= 80;
+}
+
 function momentumScore(stock: Stock) {
+  if (!strategyReady(stock)) return 0;
   const shortTrend = stockMovingAverageTrend(stock);
   const shortScore = shortTrend.rising ? shortTrend.score : shortTrend.score * 0.35;
   const longScore = stockLongTrendScore(stock);
@@ -1080,6 +862,7 @@ function isStockMovingAverageBroken(stock: Stock) {
 
 function isThemeUptrend(theme: ThemeUniverse) {
   const leaders = theme.stocks.slice(0, portfolioTargetSize);
+  if (!leaders.every(strategyReady)) return false;
   const risingLeaders = leaders.filter((stock) => {
     const shortTrend = stockMovingAverageTrend(stock);
 
@@ -1104,191 +887,14 @@ function isMovingAverageRollingOver(theme: ThemeUniverse) {
   return momentum < 0 && rolloverSignals.filter(Boolean).length >= Math.ceil(rolloverSignals.length * 0.7);
 }
 
-function themeSparklinePath(theme: ThemeUniverse, width = 142, height = 34) {
-  const points = theme.stocks.slice(0, themeHoldingLimit).map((stock) => momentumScore(stock));
-  const min = Math.min(...points);
-  const max = Math.max(...points);
-  const spread = max - min || 1;
-
-  return points
-    .map((value, index) => {
-      const x = (index / Math.max(points.length - 1, 1)) * width;
-      const y = height - ((value - min) / spread) * height;
-
-      return `${index === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
-    })
-    .join(" ");
-}
-
-function xFor(index: number, count: number, width: number, paddingLeft: number, paddingRight: number) {
-  return paddingLeft + (index / Math.max(count - 1, 1)) * (width - paddingLeft - paddingRight);
-}
-
-function yFor(value: number, min: number, max: number, height: number, paddingTop: number, paddingBottom: number) {
-  const spread = max - min || 1;
-  return paddingTop + ((max - value) / spread) * (height - paddingTop - paddingBottom);
-}
-
-function buildPath(
-  points: ChartPoint[],
-  width: number,
-  height: number,
-  min: number,
-  max: number,
-  paddingTop: number,
-  paddingBottom: number,
-) {
-  return points
-    .map((point, index) => {
-      const x = xFor(index, points.length, width, chartPaddingLeft, chartPaddingRight);
-      const y = yFor(point.value, min, max, height, paddingTop, paddingBottom);
-      return `${index === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
-    })
-    .join(" ");
-}
-
-function movingAveragePath(
-  points: ChartPoint[],
-  period: number,
-  width: number,
-  height: number,
-  min: number,
-  max: number,
-  paddingTop: number,
-  paddingBottom: number,
-) {
-  if (!points.length) {
-    return "";
-  }
-
-  return points
-    .map((point, index) => {
-      const windowPoints = points.slice(Math.max(0, index - period + 1), index + 1);
-      const average = windowPoints.reduce((sum, item) => sum + item.close, 0) / windowPoints.length;
-      const x = xFor(index, points.length, width, chartPaddingLeft, chartPaddingRight);
-      const y = yFor(average, min, max, height, paddingTop, paddingBottom);
-
-      return `${index === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
-    })
-    .filter(Boolean)
-    .join(" ");
-}
-
-function axisTickIndexes(count: number) {
-  const tickCount = 6;
-  const step = Math.max(1, Math.floor((count - 1) / (tickCount - 1)));
-  return [...new Set(Array.from({ length: tickCount }, (_, index) => Math.min(count - 1, index * step)).concat(count - 1))];
-}
-
-function minimumRealHistoryPoints(range: RangeKey) {
-  if (range === "LIVE") {
-    return 2;
-  }
-
-  if (range === "1D") {
-    return 12;
-  }
-
-  return 2;
-}
-
-function mergeLiveQuotes(universes: ThemeUniverse[], quotes: KisQuote[]) {
-  if (!quotes.length) {
-    return universes;
-  }
-
-  const quoteMap = new Map(quotes.map((quote) => [quote.symbol, quote]));
-
-  return universes.map((theme) => ({
-    ...theme,
-    stocks: theme.stocks.map((stock) => {
-      const quote = quoteMap.get(stock.symbol);
-
-      if (!quote) {
-        return stock;
-      }
-
-      return {
-        ...stock,
-        name: quote.name,
-        localName: quote.local_name,
-        market: quote.market,
-        price: quote.price,
-        change: quote.change,
-        changeAmount: quote.change_amount,
-        open: quote.open,
-        high: quote.high,
-        low: quote.low,
-        volume: quote.volume,
-        fetchedAt: quote.fetched_at,
-        source: quote.source,
-        signal: stockSignal(quote.change),
-        strategy: "KIS quote + theme rotation",
-        series: buildSeries(quote.price, quote.change, stock.rank + theme.id.length),
-      };
-    }),
-  }));
-}
-
-function tickUniverses(universes: ThemeUniverse[], tick: number) {
-  return universes.map((theme, themeIndex) => ({
-    ...theme,
-    stocks: theme.stocks.map((stock, stockIndex) => {
-      const drift = Math.sin((tick + stockIndex * 11 + themeIndex * 17) / 17) * 0.0008 + momentumScore(stock) * 0.000025;
-      const nextPrice = Math.max(1, stock.price * (1 + drift));
-      const previousClose = stock.series.LIVE.at(-1)?.close ?? stock.price;
-      const nextPoint: ChartPoint = {
-        label: formatClock(9 * 60 + ((tick + stockIndex * 3) % 390)),
-        value: nextPrice,
-        open: previousClose,
-        high: Math.max(previousClose, nextPrice) * 1.0014,
-        low: Math.min(previousClose, nextPrice) * 0.9986,
-        close: nextPrice,
-        volume: Math.round((stock.volume ?? 400000) * (0.7 + Math.abs(Math.sin(tick / 9 + stockIndex)))),
-      };
-      const live = [...stock.series.LIVE.slice(-83), nextPoint];
-      const oneDay = stock.series["1D"].map((point, index, points) => {
-        if (index !== points.length - 1) {
-          return point;
-        }
-
-        return {
-          ...point,
-          value: nextPrice,
-          close: nextPrice,
-          high: Math.max(point.high, nextPrice),
-          low: Math.min(point.low, nextPrice),
-          volume: point.volume + nextPoint.volume,
-        };
-      });
-      const change = ((nextPrice - (stock.open || nextPrice)) / (stock.open || nextPrice)) * 100;
-
-      return {
-        ...stock,
-        price: nextPrice,
-        change,
-        changeAmount: nextPrice - (stock.open || nextPrice),
-        high: Math.max(stock.high ?? nextPrice, nextPrice),
-        low: Math.min(stock.low ?? nextPrice, nextPrice),
-        signal: stockSignal(change),
-        series: { ...stock.series, LIVE: live, "1D": oneDay },
-      };
-    }),
-  }));
-}
-
 export default function StockDashboard() {
   const [query, setQuery] = useState("");
   const [marketScope, setMarketScope] = useState<MarketScope>("domestic");
-  const [language, setLanguage] = useState<Language>("ko");
+  const [language, setLanguage] = useState<Language>("en");
   const [selectedSymbol, setSelectedSymbol] = useState("005930");
   const [watchlist, setWatchlist] = useState(["005930", "000660", "373220", "NVDA", "MSFT"]);
-  const [range, setRange] = useState<RangeKey>("LIVE");
-  const [chartType, setChartType] = useState<ChartType>("candle");
-  const [activePoint, setActivePoint] = useState<number | null>(null);
   const [universeMode, setUniverseMode] = useState<UniverseMode>("core");
   const [universes, setUniverses] = useState<ThemeUniverse[]>(() => buildUniverse("core"));
-  const [chartHistory, setChartHistory] = useState<Record<string, Partial<Record<RangeKey, ChartPoint[]>>>>({});
   const [dataStatus, setDataStatus] = useState<DataStatus>("idle");
   const [dataError, setDataError] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
@@ -1298,6 +904,14 @@ export default function StockDashboard() {
   const [lastThemeRefreshAt, setLastThemeRefreshAt] = useState("");
   const [themeRefreshBlockedUntil, setThemeRefreshBlockedUntil] = useState(0);
   const [autoRun, setAutoRun] = useState(false);
+  const [profitPoints, setProfitPoints] = useState<ProfitPoint[]>([]);
+  const [brokerStatus, setBrokerStatus] = useState("Checking credentials");
+  const [brokerConfigured, setBrokerConfigured] = useState(false);
+  const [connectionBusy, setConnectionBusy] = useState(false);
+  const latestPortfolio = useRef({ value: defaultPaperCash, fresh: false, syncedAt: 0 });
+  const [lastQuoteSync, setLastQuoteSync] = useState(0);
+  const sessionBaseline = useRef(defaultPaperCash);
+  const symbolList = [...new Set(universes.flatMap(theme => theme.stocks.map(stock => stock.symbol)))].join(",");
   const [paperInitialCash, setPaperInitialCash] = useState(defaultPaperCash);
   const [paperCashInput, setPaperCashInput] = useState(String(defaultPaperCash));
   const [cash, setCash] = useState(defaultPaperCash);
@@ -1306,7 +920,8 @@ export default function StockDashboard() {
   const [sidecarAlert, setSidecarAlert] = useState("");
   const [tick, setTick] = useState(0);
   const [activeNav, setActiveNav] = useState("home");
-  const [statusMessage, setStatusMessage] = useState("자동 전략 대기 중");
+  const [statusMessage, setStatusMessage] = useState("Waiting for Toss market data and strategy history");
+  const [apiBlocked, setApiBlocked] = useState(false);
 
   const t = copy[language];
   const stocks = useMemo(() => universes.flatMap((theme) => theme.stocks), [universes]);
@@ -1320,6 +935,7 @@ export default function StockDashboard() {
     () => marketThemes.flatMap((theme) => theme.stocks).sort((a, b) => b.marketCap - a.marketCap),
     [marketThemes],
   );
+  const strategySymbolList = [...new Set(marketStocks.map(stock => stock.symbol))].join(",");
   const filteredStocks = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
 
@@ -1362,41 +978,51 @@ export default function StockDashboard() {
     stocks.find((stock) => stock.symbol === selectedSymbol && stock.region === marketScope) ??
     marketStocks[0] ??
     stocks[0];
-  const selectedStockSymbol = selectedStock.symbol;
+
+  const clearApiBlock = () => {
+    if (!apiBlocked) {
+      return;
+    }
+
+    setApiBlocked(false);
+    setDataError("");
+    setDataStatus("loading");
+  };
 
   useEffect(() => {
+    if (apiBlocked) {
+      return;
+    }
+
     const controller = new AbortController();
 
     async function loadThemeUniverse() {
       setThemeRefreshStatus("loading");
-      const fallbackUniverses = buildUniverse(universeMode);
-      const fallbackLabel = universeMode === "all" ? "extended" : "core";
-      const applyLocalUniverse = (reason: string) => {
-        setUniverses(fallbackUniverses);
-        setThemeRefreshStatus("ready");
-        setLastThemeRefreshAt(new Date().toLocaleTimeString("ko-KR"));
-        setThemeRefreshMessage(`${reason}, using local ${fallbackLabel} universe`);
-      };
-
       try {
         const response = await fetch(`${apiBaseUrl}/universe/themes?mode=${universeMode}`, { signal: controller.signal });
 
         if (!response.ok) {
-          applyLocalUniverse("Theme API failed");
-          setStatusMessage("테마 API 연결 실패, 샘플 유니버스 유지");
-          return;
+          const payload = (await response.json().catch(() => null)) as { detail?: string } | null;
+          throw new Error(payload?.detail ?? `Theme API request failed: ${response.status}`);
         }
 
         const payload = (await response.json()) as ThemeUniverseApiResponse;
         const nextUniverses = universeFromApi(payload, universeMode);
 
         if (!nextUniverses.length) {
-          applyLocalUniverse("Theme API returned no symbols");
-          setStatusMessage("테마 API 응답 없음, 샘플 유니버스 유지");
+          setThemeRefreshStatus("error");
+          setThemeRefreshMessage("Theme API returned no symbols");
+          setStatusMessage("테마 API 응답 없음");
           return;
         }
 
-        setUniverses(nextUniverses);
+        setUniverses(current => {
+          const previous = new Map(current.flatMap(theme => theme.stocks).map(stock => [stock.symbol, stock]));
+          return nextUniverses.map(theme => ({ ...theme, stocks: theme.stocks.map(stock => {
+            const known = previous.get(stock.symbol);
+            return known ? { ...stock, price: known.price, change: known.change, source: known.source, fetchedAt: known.fetchedAt, fxRate: known.fxRate, strategyFetchedAt: known.strategyFetchedAt, series: known.series } : stock;
+          }) }));
+        });
         setThemeRefreshStatus("ready");
         setLastThemeRefreshAt(
           payload.refreshed_at
@@ -1406,11 +1032,13 @@ export default function StockDashboard() {
         setThemeRefreshMessage(
           `${payload.mode === "all" || universeMode === "all" ? "Extended" : "Core"} TOP5 refreshed · ${nextUniverses.length} themes`,
         );
-        setStatusMessage("테마/시총 TOP5 갱신 완료");
-      } catch {
+        setStatusMessage("Theme TOP5 refreshed");
+      } catch (error) {
         if (!controller.signal.aborted) {
-          applyLocalUniverse("Theme API failed");
-          setStatusMessage("테마 API 연결 실패, 샘플 유니버스 유지");
+          const message = error instanceof Error ? error.message : "Theme API request failed.";
+          setThemeRefreshStatus("error");
+          setThemeRefreshMessage(`Theme API error: ${message}`);
+          setStatusMessage(`테마 API 에러: ${message}`);
         }
 
         return;
@@ -1420,108 +1048,92 @@ export default function StockDashboard() {
     loadThemeUniverse();
 
     return () => controller.abort();
-  }, [universeMode, universeRefreshKey]);
-
-  useEffect(() => {
-    const intervalId = window.setInterval(() => {
-      setTick((currentTick) => {
-        const nextTick = currentTick + 1;
-        setUniverses((currentUniverses) => tickUniverses(currentUniverses, nextTick));
-
-        return nextTick;
-      });
-    }, 1000);
-
-    return () => window.clearInterval(intervalId);
-  }, []);
+  }, [apiBlocked, universeMode, universeRefreshKey]);
 
   useEffect(() => {
     const controller = new AbortController();
-
-    async function loadQuotes() {
-      setDataStatus((currentStatus) => (currentStatus === "idle" ? "loading" : currentStatus));
-      setDataError("");
-
-      try {
-        const response = await fetch(`${apiBaseUrl}/quotes/kis/watchlist`, { signal: controller.signal });
-
-        if (!response.ok) {
-          const payload = (await response.json().catch(() => null)) as { detail?: string } | null;
-          throw new Error(payload?.detail ?? `KIS quote request failed: ${response.status}`);
-        }
-
-        const payload = (await response.json()) as KisWatchlistResponse;
-        setUniverses((currentUniverses) => mergeLiveQuotes(currentUniverses, payload.data));
-        setDataStatus(payload.errors.length ? "error" : "ready");
-        setDataError(payload.errors.join(" / "));
-      } catch (error) {
-        if (controller.signal.aborted) {
-          return;
-        }
-
-        setDataStatus("error");
-        setDataError(error instanceof Error ? error.message : "KIS quote request failed.");
-      }
-    }
-
-    loadQuotes();
-    const intervalId = window.setInterval(loadQuotes, quotePollingMs);
-
-    return () => {
-      controller.abort();
-      window.clearInterval(intervalId);
-    };
+    fetch(`${apiBaseUrl}/brokers/toss/status`, { signal: controller.signal })
+      .then(response => { if (!response.ok) throw new Error("Broker status unavailable"); return response.json(); })
+      .then(payload => {
+        setBrokerConfigured(payload.configured);
+        setBrokerStatus(payload.configured ? "Credentials configured — verify connection" : "Setup required: TOSS_CLIENT_ID / TOSS_CLIENT_SECRET");
+      }).catch(error => { if (!controller.signal.aborted) setBrokerStatus(error.message); });
+    return () => controller.abort();
   }, [refreshKey]);
 
   useEffect(() => {
-    if (!selectedStockSymbol) {
-      return;
-    }
-
+    if (!brokerConfigured) return;
     const controller = new AbortController();
-
-    async function loadChartHistory() {
+    let timer: ReturnType<typeof setTimeout>;
+    async function loadPrices() {
       try {
-        const response = await fetch(`${apiBaseUrl}/quotes/kis/history/${selectedStockSymbol}?range=${range}`, {
-          signal: controller.signal,
-        });
-
-        if (!response.ok) {
-          return;
+        const response = await fetch(`${apiBaseUrl}/brokers/toss/prices?symbols=${encodeURIComponent(symbolList)}`, { signal: controller.signal });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.detail ?? "Toss price request failed");
+        if (!payload.data.length || !Number.isFinite(Number(payload.usd_krw)) || Number(payload.usd_krw) <= 0) throw new Error("Toss returned incomplete market data");
+        setLastQuoteSync(Date.parse(payload.synced_at));
+        const prices = new Map<string, TossPrice>(payload.data.map((p: TossPrice) => [p.symbol, p]));
+        setUniverses(current => current.map(theme => ({ ...theme, stocks: theme.stocks.map(stock => {
+          const price = prices.get(stock.symbol);
+          if (!price || !Number.isFinite(Number(price.lastPrice)) || Number(price.lastPrice) <= 0) return stock;
+          const previousClose = stock.series["1Y"].at(-2)?.close;
+          return { ...stock, price: Number(price.lastPrice), currency: price.currency, change: previousClose ? (Number(price.lastPrice) / previousClose - 1) * 100 : 0, signal: stockSignal(previousClose ? (Number(price.lastPrice) / previousClose - 1) * 100 : 0),
+            fetchedAt: payload.synced_at, fxRate: Number(payload.usd_krw), source: payload.source };
+        }) })));
+        setDataStatus("ready"); setDataError(""); setApiBlocked(false);
+        setTick(current => current + 30);
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setDataStatus("error"); setDataError(error instanceof Error ? error.message : "Toss price request failed");
         }
-
-        const payload = (await response.json()) as KisHistoryResponse;
-        const points = payload.data.map(pointFromHistoryCandle);
-
-        if (!points.length) {
-          return;
-        }
-
-        setChartHistory((currentHistory) => ({
-          ...currentHistory,
-          [selectedStockSymbol]: {
-            ...currentHistory[selectedStockSymbol],
-            [range]: points,
-          },
-        }));
-      } catch {
-        return;
+      } finally {
+        if (!controller.signal.aborted) timer = setTimeout(loadPrices, quotePollingMs);
       }
     }
-
-    loadChartHistory();
-    const intervalId = range === "LIVE" ? window.setInterval(loadChartHistory, liveChartPollingMs) : null;
-
-    return () => {
-      controller.abort();
-      if (intervalId) {
-        window.clearInterval(intervalId);
-      }
-    };
-  }, [range, selectedStockSymbol]);
+    void loadPrices();
+    return () => { controller.abort(); clearTimeout(timer); };
+  }, [brokerConfigured, symbolList, refreshKey]);
 
   useEffect(() => {
-    if (!autoRun || !activeTheme || !targetStocks.length) {
+    if (!brokerConfigured || !autoRun) return;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    async function loadStrategy() {
+      try {
+        for (const symbol of strategySymbolList.split(",")) {
+          const response = await fetch(`${apiBaseUrl}/brokers/toss/strategy/${encodeURIComponent(symbol)}`, { signal: controller.signal });
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload.detail ?? "Strategy data unavailable");
+          const points = (candles: TossCandle[]): ChartPoint[] => candles.map(c => ({
+            label: c.timestamp, timestamp: c.timestamp, value: Number(c.closePrice),
+            open: Number(c.openPrice), high: Number(c.highPrice), low: Number(c.lowPrice),
+            close: Number(c.closePrice), volume: Number(c.volume), source: "Toss Securities Open API",
+          }));
+          setUniverses(current => current.map(theme => ({ ...theme, stocks: theme.stocks.map(stock => stock.symbol !== symbol ? stock : {
+            ...stock, strategyFetchedAt: Date.parse(payload.synced_at), series: { ...stock.series, LIVE: points(payload.minute), "1M": points(payload.daily), "1Y": points(payload.daily) },
+          }) })));
+        }
+      } catch (error) {
+        if (!controller.signal.aborted) setStatusMessage(error instanceof Error ? error.message : "Strategy data unavailable");
+      } finally {
+        if (!controller.signal.aborted) timer = setTimeout(loadStrategy, 900_000);
+      }
+    }
+    void loadStrategy();
+    return () => { controller.abort(); clearTimeout(timer); };
+  }, [brokerConfigured, strategySymbolList, autoRun, refreshKey]);
+
+  useEffect(() => {
+    if (!autoRun) return;
+    const timer = window.setInterval(() => {
+      if (!latestPortfolio.current.fresh || Date.now() - latestPortfolio.current.syncedAt >= 90_000) return;
+      setProfitPoints(current => [...current, { timestamp: Date.now(), value: latestPortfolio.current.value - sessionBaseline.current }]);
+    }, 5_000);
+    return () => window.clearInterval(timer);
+  }, [autoRun]);
+
+  useEffect(() => {
+    if (!autoRun || dataStatus !== "ready" || !activeTheme || !targetStocks.length || !marketStocks.every(strategyReady) || !positions.every(p => stocks.some(s => s.symbol === p.symbol && strategyReady(s)))) {
       return;
     }
 
@@ -1540,9 +1152,15 @@ export default function StockDashboard() {
         positions.length > 0 &&
         positionsEntryValue > 0 &&
         positionsLiquidationValue <= positionsEntryValue * (1 - sidecarDrawdownRate);
-      const tradingDaySeconds = 390 * 60;
-      const closeWindowSeconds = 5 * 60;
-      const isCloseWindow = tick % tradingDaySeconds >= tradingDaySeconds - closeWindowSeconds;
+      const now = new Date();
+      const clock = new Intl.DateTimeFormat("en-GB", { timeZone: marketScope === "domestic" ? "Asia/Seoul" : "America/New_York", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(now);
+      const [hour, minute] = clock.split(":").map(Number);
+      const minutes = hour * 60 + minute;
+      const closeMinutes = marketScope === "domestic" ? 930 : 960;
+      const openMinutes = marketScope === "domestic" ? 540 : 570;
+      const day = new Intl.DateTimeFormat("en-US", { timeZone: marketScope === "domestic" ? "Asia/Seoul" : "America/New_York", weekday: "short" }).format(now);
+      const isCloseWindow = minutes >= closeMinutes - 5;
+      const isMarketSession = day !== "Sat" && day !== "Sun" && minutes >= openMinutes && minutes < closeMinutes;
       const maRollingOver = isMovingAverageRollingOver(activeTheme);
       const heldStockMaBroken = positions.some((position) => {
         const stock = stocks.find((item) => item.symbol === position.symbol);
@@ -1551,7 +1169,7 @@ export default function StockDashboard() {
       });
       const activeThemeUptrend = isThemeUptrend(activeTheme);
       const shouldExit = sidecarTriggered || lossTriggered || heldStockMaBroken || maRollingOver || isCloseWindow;
-      const canEnter = activeThemeUptrend && !maRollingOver && !isCloseWindow;
+      const canEnter = activeThemeUptrend && !maRollingOver && !isCloseWindow && isMarketSession;
       const currentSymbols = positions.map((position) => position.symbol).sort().join(",");
       const targetSymbols = targetStocks.map((stock) => stock.symbol).sort().join(",");
 
@@ -1559,7 +1177,7 @@ export default function StockDashboard() {
         setCash(portfolioValue);
         setPositions([]);
         setTradeLog((log) => [
-          `${new Date().toLocaleTimeString("ko-KR")} SELL ${
+          `${new Date().toLocaleTimeString("en-GB")} SELL ${
             sidecarTriggered
               ? "sidecar"
               : lossTriggered
@@ -1578,6 +1196,7 @@ export default function StockDashboard() {
           const message = `사이드카: 보유금액 5% 이상 손실 감지, 전량 매도 ${formatMoney(portfolioValue)}`;
 
           setSidecarAlert(message);
+          setAutoRun(false);
           setStatusMessage(message);
         } else {
           setStatusMessage(
@@ -1606,7 +1225,7 @@ export default function StockDashboard() {
         setPositions(nextPositions);
         setSidecarAlert("");
         setTradeLog((log) => [
-          `${new Date().toLocaleTimeString("ko-KR")} BUY ${themeName(activeTheme, language)} TOP3 fee ${formatMoney(
+          `${new Date().toLocaleTimeString("en-GB")} BUY ${themeName(activeTheme, language)} TOP3 fee ${formatMoney(
             nextPositions.reduce((sum, position) => sum + position.entryFee, 0),
           )}`,
           ...log.slice(0, 5),
@@ -1627,65 +1246,32 @@ export default function StockDashboard() {
     }, 0);
 
     return () => window.clearTimeout(timeoutId);
-  }, [activeTheme, autoRun, cash, language, positions, stocks, targetStocks, tick]);
+  }, [activeTheme, autoRun, cash, language, positions, stocks, targetStocks, tick, dataStatus, marketStocks, marketScope]);
 
-  const selectedFallbackPoints = selectedStock.series[range];
-  const selectedHistoryPoints = chartHistory[selectedStock.symbol]?.[range];
-  const hasRealChartHistory = Boolean(selectedHistoryPoints?.length && selectedHistoryPoints.length >= minimumRealHistoryPoints(range));
-  const selectedPoints = hasRealChartHistory && selectedHistoryPoints ? selectedHistoryPoints : selectedFallbackPoints;
-  const chartSourceLabel = hasRealChartHistory
-    ? `${selectedPoints[0]?.source ?? "KIS chart history"} · ${selectedPoints.length} candles`
-    : `Sample fallback · ${selectedPoints.length} candles`;
-  const selectedValues = selectedPoints.map((point) => point.value);
-  const selectedIndex = Math.min(activePoint ?? selectedPoints.length - 1, selectedPoints.length - 1);
-  const selectedPoint = selectedPoints[selectedIndex];
-  const rangeStart = selectedValues[0];
-  const rangeEnd = selectedValues[selectedValues.length - 1];
-  const rangeMove = ((rangeEnd - rangeStart) / rangeStart) * 100;
-  const chartWidth = 900;
-  const chartHeight = 420;
-  const priceTop = 18;
-  const priceBottomPadding = 108;
-  const priceBottomY = chartHeight - priceBottomPadding;
-  const volumeTopY = priceBottomY + 16;
-  const volumePaneHeight = 46;
-  const xAxisLabelY = chartHeight - 12;
-  const candleExtremes = selectedPoints.flatMap((point) => [point.high, point.low]);
-  const rawChartMin = Math.min(...selectedValues, ...candleExtremes);
-  const rawChartMax = Math.max(...selectedValues, ...candleExtremes);
-  const chartSpread = rawChartMax - rawChartMin || Math.abs(rangeEnd) * 0.01 || 1;
-  const chartMin = rawChartMin - chartSpread * 0.12;
-  const chartMax = rawChartMax + chartSpread * 0.1;
-  const path = buildPath(selectedPoints, chartWidth, chartHeight, chartMin, chartMax, priceTop, priceBottomPadding);
-  const ma5Path = movingAveragePath(selectedPoints, 5, chartWidth, chartHeight, chartMin, chartMax, priceTop, priceBottomPadding);
-  const ma20Path = movingAveragePath(selectedPoints, 20, chartWidth, chartHeight, chartMin, chartMax, priceTop, priceBottomPadding);
-  const ma60Path = movingAveragePath(selectedPoints, 60, chartWidth, chartHeight, chartMin, chartMax, priceTop, priceBottomPadding);
-  const ma120Path = movingAveragePath(selectedPoints, 120, chartWidth, chartHeight, chartMin, chartMax, priceTop, priceBottomPadding);
-  const xAxisIndexes = axisTickIndexes(selectedPoints.length);
-  const yAxisTicks = [0, 1, 2, 3, 4].map((item) => chartMax - ((chartMax - chartMin) * item) / 4);
-  const candleWidth = Math.max(3, Math.min(10, ((chartWidth - 86) / selectedPoints.length) * 0.55));
-  const latestPoint = selectedPoints[selectedPoints.length - 1];
-  const latestY = yFor(latestPoint.value, chartMin, chartMax, chartHeight, priceTop, priceBottomPadding);
-  const showActivePoint = activePoint !== null;
-  const activeX = xFor(selectedIndex, selectedPoints.length, chartWidth, chartPaddingLeft, chartPaddingRight);
-  const activeY = yFor(selectedPoint.value, chartMin, chartMax, chartHeight, priceTop, priceBottomPadding);
-  const volumeMax = Math.max(...selectedPoints.map((point) => point.volume || 1));
   const watchedStocks = watchlist
     .map((symbol) => stocks.find((stock) => stock.symbol === symbol))
     .filter((stock): stock is Stock => Boolean(stock))
     .filter((stock) => stock.region === marketScope);
-  const latestFetchedAt = stocks.find((stock) => stock.fetchedAt)?.fetchedAt;
-  const tradingMarketLabel = marketScope === "domestic" ? "국내 모의매매" : `해외 모의매매 · FX ${usdKrw.toLocaleString("ko-KR")}`;
+  const tradingMarketLabel = marketScope === "domestic" ? "Domestic paper" : `Overseas paper · FX ${selectedStock.fxRate ?? "pending"}`;
   const tradingCostText = tradingCostLabel(marketScope);
   const accountValue = positions.reduce((sum, position) => {
     const stock = stocks.find((item) => item.symbol === position.symbol);
     return sum + liquidationValue(position, stock);
   }, cash);
+  const portfolioFresh = dataStatus === "ready" && positions.every(p => stocks.some(s => s.symbol === p.symbol && quoteFresh(s)));
+  useEffect(() => { latestPortfolio.current = { value: accountValue, fresh: portfolioFresh, syncedAt: lastQuoteSync }; }, [accountValue, portfolioFresh, lastQuoteSync]);
+  const profitValues = profitPoints.map(point => point.value);
+  const flatProfit = profitValues.every(value => value === 0);
+  const profitMin = Math.min(flatProfit ? -1 : 0, ...profitValues);
+  const profitMax = Math.max(flatProfit ? 1 : 0, ...profitValues);
+  const profitSpread = profitMax - profitMin || 1;
+  const profitPath = profitPoints.map((point, index) => `${index ? "L" : "M"} ${50 + (point.timestamp - (profitPoints[0]?.timestamp ?? point.timestamp)) / Math.max(1, (profitPoints.at(-1)?.timestamp ?? point.timestamp) - (profitPoints[0]?.timestamp ?? point.timestamp)) * 760} ${40 + (profitMax - point.value) / profitSpread * 250}`).join(" ");
   const activeThemeIsUptrend = activeTheme ? isThemeUptrend(activeTheme) : false;
   const pnl = accountValue - paperInitialCash;
   const pnlRate = (pnl / paperInitialCash) * 100;
-  const dataModeLabel =
-    dataStatus === "loading"
+  const dataModeLabel = apiBlocked
+    ? "API paused"
+    : dataStatus === "loading"
       ? t.loadingQuotes
       : dataStatus === "error"
         ? t.quoteError
@@ -1694,10 +1280,10 @@ export default function StockDashboard() {
           : t.dataMode;
   const marketFeed = [
     {
-      label: "KIS",
-      value: stocks.some((stock) => stock.source) ? "10s synced" : "local ticks",
-      change: dataStatus === "error" ? "ERR" : "LIVE",
-      positive: dataStatus !== "error",
+      label: "Toss",
+      value: brokerConfigured ? "30s polling" : "Setup required",
+      change: dataStatus === "ready" ? "CONNECTED" : "PENDING",
+      positive: dataStatus === "ready",
     },
     {
       label: activeTheme ? themeName(activeTheme, language) : "-",
@@ -1719,10 +1305,10 @@ export default function StockDashboard() {
   function selectMarket(nextScope: MarketScope) {
     const firstStock = stocks.find((stock) => stock.region === nextScope);
 
+    if (autoRun || positions.length) { setStatusMessage("Stop and reset the paper session before changing markets"); return; }
     setMarketScope(nextScope);
     setSelectedSymbol(firstStock?.symbol ?? selectedSymbol);
     setQuery("");
-    setActivePoint(null);
   }
 
   function toggleWatchlist(symbol: string) {
@@ -1737,6 +1323,8 @@ export default function StockDashboard() {
     const parsedInputCash = Number(paperCashInput);
     const nextInitialCash = Math.max(1_000_000, Math.round(Number.isFinite(parsedInputCash) ? parsedInputCash : defaultPaperCash));
 
+    setAutoRun(false);
+    setProfitPoints([]);
     setPaperInitialCash(nextInitialCash);
     setPaperCashInput(String(nextInitialCash));
     setCash(nextInitialCash);
@@ -1753,11 +1341,11 @@ export default function StockDashboard() {
       return;
     }
 
+    if (theme.region !== marketScope && (autoRun || positions.length)) { setStatusMessage("Stop and reset before changing markets"); return; }
     setMarketScope(theme.region);
     setSelectedSymbol(firstStock.symbol);
     setQuery("");
-    setActivePoint(null);
-    setStatusMessage(`${themeName(theme, language)} TOP5 그래프 확인`);
+    setStatusMessage(`${themeName(theme, language)} TOP5 selected`);
   }
 
   function handleUniverseModeChange(nextMode: UniverseMode) {
@@ -1765,13 +1353,18 @@ export default function StockDashboard() {
       return;
     }
 
+    if (autoRun || positions.length) { setStatusMessage("Stop and reset the paper session before changing universe modes"); return; }
     setUniverseMode(nextMode);
     setQuery("");
-    setActivePoint(null);
     setStatusMessage(nextMode === "core" ? "코어 테마만 표시" : "확장 테마까지 표시");
   }
 
   function handleUniverseRefresh() {
+    if (apiBlocked) {
+      clearApiBlock();
+      setStatusMessage("Retrying data feeds...");
+    }
+
     const now = Date.now();
 
     if (now < themeRefreshBlockedUntil) {
@@ -1787,11 +1380,23 @@ export default function StockDashboard() {
     setUniverseRefreshKey((currentKey) => currentKey + 1);
   }
 
-  function handleChartPointerMove(event: React.PointerEvent<SVGSVGElement>) {
-    const rect = event.currentTarget.getBoundingClientRect();
-    const relativeX = event.clientX - rect.left;
-    const ratio = Math.min(Math.max(relativeX / rect.width, 0), 1);
-    setActivePoint(Math.round(ratio * (selectedPoints.length - 1)));
+  function toggleAutomation(running: boolean) {
+    if (running && !profitPoints.length) {
+      sessionBaseline.current = accountValue;
+      setProfitPoints([{ timestamp: Date.now(), value: 0 }]);
+    }
+    setAutoRun(running);
+  }
+
+  async function verifyConnection() {
+    setConnectionBusy(true);
+    try {
+      const response = await fetch(`${apiBaseUrl}/brokers/toss/connection`);
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail ?? "Connection failed");
+      setBrokerStatus(`Connected · ${payload.accounts.length} account(s) · local paper orders`);
+    } catch (error) { setBrokerStatus(error instanceof Error ? error.message : "Connection failed"); }
+    finally { setConnectionBusy(false); }
   }
 
   return (
@@ -1827,7 +1432,8 @@ export default function StockDashboard() {
         <div className={styles.brokerBox}>
           <span>{t.broker}</span>
           <strong>{t.demoAccount}</strong>
-          <small>{t.connected}</small>
+          <small>{brokerStatus}</small>
+          <button type="button" disabled={!brokerConfigured || connectionBusy} onClick={verifyConnection}>{connectionBusy ? "Connecting…" : "Verify Toss connection"}</button>
           <div>
             <span>{t.buyingPower}</span>
             <strong>{formatMoney(cash)}</strong>
@@ -1875,7 +1481,7 @@ export default function StockDashboard() {
               type="button"
               aria-label="Settings"
               onClick={() => {
-                setStatusMessage("설정: 10초 갱신 / TOP3 모의투자 / 2% 손절 / 5% 사이드카");
+                setStatusMessage("Settings: 30s quotes / 5s profit samples / TOP3 paper / 2% stop / 5% sidecar");
               }}
             >
               <Settings size={18} />
@@ -1926,15 +1532,18 @@ export default function StockDashboard() {
             <span>{t.market}</span>
             <strong>
               <span aria-hidden="true" />
-              {t.open}
+              {dataStatus === "ready" ? "Data connected" : "Pending"}
             </strong>
             <small>{dataModeLabel}</small>
-            <button
-              className={styles.refreshButton}
-              type="button"
-              onClick={() => setRefreshKey((currentKey) => currentKey + 1)}
-              aria-label={t.refreshQuotes}
-            >
+              <button
+                className={styles.refreshButton}
+                type="button"
+                onClick={() => {
+                  clearApiBlock();
+                  setRefreshKey((currentKey) => currentKey + 1);
+                }}
+                aria-label={t.refreshQuotes}
+              >
               <RefreshCw size={14} />
             </button>
             <button
@@ -1980,8 +1589,7 @@ export default function StockDashboard() {
                         type="button"
                         onClick={() => {
                           setSelectedSymbol(stock.symbol);
-                          setActivePoint(null);
-                        }}
+                                              }}
                       >
                         <span>
                           <strong>
@@ -1991,11 +1599,11 @@ export default function StockDashboard() {
                           <small>{stockName(stock, language)}</small>
                         </span>
                         <span>
-                          <b>{formatPrice(stock)}</b>
+                          <b>{stock.source ? formatPrice(stock) : "Awaiting Toss"}</b>
                           <small className={stock.change >= 0 ? styles.positive : styles.negative}>
                             {stock.change >= 0 ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
                             {stock.change > 0 ? "+" : ""}
-                            {stock.change.toFixed(2)}%
+                            {stock.source ? stock.change.toFixed(2) : "—"}%
                           </small>
                         </span>
                       </button>
@@ -2010,222 +1618,29 @@ export default function StockDashboard() {
 
           <div className={styles.chartPanel}>
             <div className={styles.chartHeader}>
-              <div>
-                <span>
-                  {selectedStock.market} / {t.deskMode}
-                </span>
-                <h2>
-                  {selectedStock.symbol}
-                  <small>{stockName(selectedStock, language)}</small>
-                </h2>
-              </div>
-              <button
-                className={watchlist.includes(selectedStock.symbol) ? styles.watchButtonActive : styles.watchButton}
-                type="button"
-                onClick={() => toggleWatchlist(selectedStock.symbol)}
-              >
-                <Star size={17} fill={watchlist.includes(selectedStock.symbol) ? "currentColor" : "none"} />
-                {watchlist.includes(selectedStock.symbol) ? t.watchlist : "+ Watch"}
-              </button>
+              <div><span>Toss Securities · local paper trading</span><h2>Session profit</h2></div>
+              <button className={styles.watchButton} type="button" onClick={() => toggleWatchlist(selectedStock.symbol)}><Star size={17} />{selectedStock.symbol}</button>
             </div>
-
             <div className={styles.quoteStrip}>
-              <div>
-                <span>{t.lastPrice}</span>
-                <strong>{formatPrice(selectedStock)}</strong>
-              </div>
-              <div>
-                <span>{t.portfolioSignal}</span>
-                <strong>{signalLabel(selectedStock.signal, language)}</strong>
-              </div>
-              <div>
-                <span>{t.sector}</span>
-                <strong>{sectorName(selectedStock, language)}</strong>
-              </div>
-              <div>
-                <span>Market cap</span>
-                <strong>{formatCompactNumber(selectedStock.marketCap)}B</strong>
-              </div>
+              <div><span>Profit since start</span><strong data-testid="session-profit">{formatMoney(profitPoints.at(-1)?.value ?? 0)}</strong></div>
+              <div><span>Paper equity</span><strong>{formatMoney(accountValue)}</strong></div>
+              <div><span>Sampling / market data</span><strong>5s / 30s</strong></div>
+              <div><span>Status</span><strong>{autoRun ? "Running" : profitPoints.length ? "Paused" : "Not started"}</strong></div>
             </div>
-            <div className={styles.sourceMeta}>
-              <span>{selectedStock.source ?? "Sample + local ticks"}</span>
-              <span data-testid="chart-source-label">{chartSourceLabel}</span>
-              <span>
-                {t.updated} {formatFetchedAt(selectedStock.fetchedAt ?? latestFetchedAt, language)}
-              </span>
-              <span>Volume {formatCompactNumber(selectedStock.volume)}</span>
-              <span>{statusMessage}</span>
-            </div>
-
-            <div className={styles.chartControls}>
-              <div className={styles.chartTypeTabs} aria-label={t.chartType}>
-                {(["candle", "line"] as ChartType[]).map((type) => (
-                  <button
-                    key={type}
-                    className={type === chartType ? styles.rangeActive : ""}
-                    data-testid={`chart-type-${type}`}
-                    type="button"
-                    onClick={() => setChartType(type)}
-                  >
-                    {type === "candle" ? <CandlestickChart size={15} /> : <LineChart size={15} />}
-                    {type === "candle" ? t.candle : t.line}
-                  </button>
-                ))}
+            <div className={styles.sourceMeta}><span>{brokerStatus}</span><span>{portfolioFresh ? "Latest snapshot · prices refreshed every 30s, FX every 5m" : "Waiting for valid quotes — sampling suspended"}</span></div>
+            {profitPoints.length ? (
+              <div className={styles.profitCanvas}>
+                <svg role="img" aria-label="Paper trading session profit chart" data-testid="profit-chart" viewBox="0 0 900 350">
+                  {[0, 1, 2, 3, 4].map(index => <g key={index}><line className={styles.gridLine} x1="50" x2="810" y1={40 + index * 62.5} y2={40 + index * 62.5} /><text className={styles.axisLabel} x="820" y={44 + index * 62.5}>{(profitMax - index * profitSpread / 4).toLocaleString("en-US", { maximumFractionDigits: profitSpread < 10 ? 1 : 0 })}</text></g>)}
+                  <path className={styles.profitLine} d={profitPath} />
+                  {profitPoints.length === 1 && <circle cx="50" cy="165" r="4" fill="#2dd4bf" />}
+                  <text className={styles.axisLabel} x="50" y="330">{new Date(profitPoints[0].timestamp).toLocaleTimeString("en-GB")}</text>
+                  <text className={styles.axisLabel} x="810" y="330" textAnchor="end">{new Date(profitPoints.at(-1)!.timestamp).toLocaleTimeString("en-GB")}</text>
+                </svg>
+                <p data-testid="profit-samples">{profitPoints.length} samples · KRW · net of estimated commissions</p>
               </div>
-              <div className={styles.rangeTabs} aria-label={t.chartRange}>
-                {ranges.map((rangeKey) => (
-                  <button
-                    key={rangeKey}
-                    className={rangeKey === range ? styles.rangeActive : ""}
-                    data-testid={`range-${rangeKey}`}
-                    type="button"
-                    onClick={() => {
-                      setRange(rangeKey);
-                      setActivePoint(null);
-                    }}
-                  >
-                    {t.rangeLabels[rangeKey]}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className={styles.chartCanvas}>
-              <svg
-                role="img"
-                aria-label={`${selectedStock.symbol} ${range} price chart`}
-                viewBox={`0 0 ${chartWidth} ${chartHeight}`}
-                onPointerMove={handleChartPointerMove}
-                onPointerLeave={() => setActivePoint(null)}
-              >
-                <defs>
-                  <linearGradient id="priceArea" x1="0" x2="0" y1="0" y2="1">
-                    <stop offset="0%" stopColor="#64748b" stopOpacity="0.24" />
-                    <stop offset="100%" stopColor="#0f172a" stopOpacity="0" />
-                  </linearGradient>
-                </defs>
-                {yAxisTicks.map((tickValue) => {
-                  const y = yFor(tickValue, chartMin, chartMax, chartHeight, priceTop, priceBottomPadding);
-
-                  return (
-                    <g key={tickValue.toFixed(2)}>
-                      <line className={styles.gridLine} x1={chartPaddingLeft} x2={chartWidth - chartPaddingRight} y1={y} y2={y} />
-                      <text className={styles.axisLabel} textAnchor="end" x={chartWidth - 10} y={y + 4}>
-                        {selectedStock.currency === "KRW" ? Math.round(tickValue).toLocaleString("ko-KR") : tickValue.toFixed(2)}
-                      </text>
-                    </g>
-                  );
-                })}
-                <g className={styles.maLegend}>
-                  <text x="10" y="16">5</text>
-                  <text x="35" y="16">20</text>
-                  <text x="66" y="16">60</text>
-                  <text x="96" y="16">120</text>
-                </g>
-                {xAxisIndexes.map((index) => {
-                  const x = xFor(index, selectedPoints.length, chartWidth, chartPaddingLeft, chartPaddingRight);
-
-                  return (
-                    <g key={`${range}-${index}`}>
-                      <line className={styles.verticalGridLine} x1={x} x2={x} y1={priceTop} y2={priceBottomY} />
-                      <text className={styles.axisLabel} textAnchor="middle" x={x} y={xAxisLabelY}>
-                        {formatChartPointLabel(selectedPoints[index], range, language)}
-                      </text>
-                    </g>
-                  );
-                })}
-                <g className={styles.volumeLayer}>
-                  {selectedPoints.map((point, index) => {
-                    const x = xFor(index, selectedPoints.length, chartWidth, chartPaddingLeft, chartPaddingRight);
-                    const height = ((point.volume || 0) / volumeMax) * volumePaneHeight;
-
-                    return (
-                      <rect
-                        className={point.close >= point.open ? styles.volumeUp : styles.volumeDown}
-                        height={height}
-                        key={`v-${index}`}
-                        width={Math.max(2, candleWidth * 0.8)}
-                        x={x - candleWidth * 0.4}
-                        y={volumeTopY + volumePaneHeight - height}
-                      />
-                    );
-                  })}
-                </g>
-                {chartType === "line" ? (
-                  <>
-                    <path
-                      className={styles.areaPath}
-                      d={`${path} L ${chartWidth - chartPaddingRight} ${priceBottomY} L ${chartPaddingLeft} ${priceBottomY} Z`}
-                    />
-                    <path className={styles.pricePath} d={path} />
-                  </>
-                ) : (
-                  <g className={styles.candleLayer}>
-                    {selectedPoints.map((point, index) => {
-                      const x = xFor(index, selectedPoints.length, chartWidth, chartPaddingLeft, chartPaddingRight);
-                      const openY = yFor(point.open, chartMin, chartMax, chartHeight, priceTop, priceBottomPadding);
-                      const closeY = yFor(point.close, chartMin, chartMax, chartHeight, priceTop, priceBottomPadding);
-                      const highY = yFor(point.high, chartMin, chartMax, chartHeight, priceTop, priceBottomPadding);
-                      const lowY = yFor(point.low, chartMin, chartMax, chartHeight, priceTop, priceBottomPadding);
-                      const isUp = point.close >= point.open;
-                      const bodyTop = Math.min(openY, closeY);
-                      const bodyHeight = Math.max(Math.abs(closeY - openY), 2);
-
-                      return (
-                        <g className={isUp ? styles.candleUp : styles.candleDown} key={`${range}-${index}`}>
-                          <line x1={x} x2={x} y1={highY} y2={lowY} />
-                          <rect x={x - candleWidth / 2} y={bodyTop} width={candleWidth} height={bodyHeight} />
-                        </g>
-                      );
-                    })}
-                  </g>
-                )}
-                {ma120Path ? <path className={styles.ma120Path} d={ma120Path} /> : null}
-                {ma60Path ? <path className={styles.ma60Path} d={ma60Path} /> : null}
-                {ma20Path ? <path className={styles.ma20Path} d={ma20Path} /> : null}
-                {ma5Path ? <path className={styles.ma5Path} d={ma5Path} /> : null}
-                <line className={styles.volumeDivider} x1={chartPaddingLeft} x2={chartWidth - chartPaddingRight} y1={volumeTopY - 8} y2={volumeTopY - 8} />
-                <line className={styles.currentPriceLine} x1={chartPaddingLeft} x2={chartWidth - chartPaddingRight} y1={latestY} y2={latestY} />
-                {showActivePoint ? (
-                  <>
-                    <line className={styles.activeLine} x1={activeX} x2={activeX} y1={priceTop} y2={priceBottomY} />
-                    <circle className={styles.activeDot} cx={activeX} cy={activeY} r="5" />
-                  </>
-                ) : null}
-              </svg>
-              {showActivePoint ? (
-                <div
-                  className={styles.chartTooltip}
-                  style={{ left: `${Math.min(88, Math.max(12, (activeX / chartWidth) * 100))}%` }}
-                >
-                  <span>{formatChartPointLabel(selectedPoint, range, language)}</span>
-                  <strong>{selectedStock.currency === "KRW" ? formatMoney(selectedPoint.value) : formatMoney(selectedPoint.value, "USD")}</strong>
-                  <small>O {selectedPoint.open.toFixed(selectedStock.currency === "KRW" ? 0 : 2)} / C {selectedPoint.close.toFixed(selectedStock.currency === "KRW" ? 0 : 2)}</small>
-                </div>
-              ) : null}
-            </div>
-
-            <div className={styles.chartFoot}>
-              <div>
-                <span>{t.rangeMove}</span>
-                <strong className={rangeMove >= 0 ? styles.positive : styles.negative}>
-                  {rangeMove >= 0 ? "+" : ""}
-                  {rangeMove.toFixed(2)}%
-                </strong>
-              </div>
-              <div>
-                <span>{t.rangeHigh}</span>
-                <strong>{selectedStock.currency === "KRW" ? formatMoney(Math.max(...candleExtremes)) : Math.max(...candleExtremes).toFixed(2)}</strong>
-              </div>
-              <div>
-                <span>{t.rangeLow}</span>
-                <strong>{selectedStock.currency === "KRW" ? formatMoney(Math.min(...candleExtremes)) : Math.min(...candleExtremes).toFixed(2)}</strong>
-              </div>
-              <div>
-                <span>{t.signalQueue}</span>
-                <strong>{signalLabel(selectedStock.signal, language)}</strong>
-              </div>
-            </div>
+            ) : <div className={styles.profitEmpty} data-testid="profit-empty"><Bot size={36} /><h3>Your session starts here</h3><p>Start paper automation to record profit every 5 seconds.</p></div>}
+            <div className={styles.sourceMeta}><span>{statusMessage}</span><span>Stop retains history. Reset clears the session. Browser reload clears paper state.</span></div>
           </div>
 
           <aside className={styles.watchPanel} aria-labelledby="watch-title">
@@ -2246,7 +1661,7 @@ export default function StockDashboard() {
                   </span>
                   <span className={stock.change >= 0 ? styles.positive : styles.negative}>
                     {stock.change > 0 ? "+" : ""}
-                    {stock.change.toFixed(2)}%
+                    {stock.source ? stock.change.toFixed(2) : "—"}%
                   </span>
                 </button>
               ))}
@@ -2258,7 +1673,7 @@ export default function StockDashboard() {
               </div>
               <div className={styles.accountGrid}>
                 <label className={styles.capitalInput}>
-                  <span>모의 원금</span>
+                  <span>Paper capital</span>
                   <input
                     data-testid="paper-cash-input"
                     inputMode="numeric"
@@ -2296,7 +1711,8 @@ export default function StockDashboard() {
                   <input
                     checked={autoRun}
                     data-testid="auto-run-toggle"
-                    onChange={(event) => setAutoRun(event.currentTarget.checked)}
+                    disabled={!autoRun && (!brokerConfigured || dataStatus !== "ready")}
+                    onChange={(event) => toggleAutomation(event.currentTarget.checked)}
                     type="checkbox"
                   />
                   <span>{autoRun ? <Pause size={15} /> : <Play size={15} />}</span>
@@ -2314,13 +1730,15 @@ export default function StockDashboard() {
                 </div>
               ) : null}
               <div className={styles.ruleList}>
-                <span>MA 이탈: 괴리 0.4% + 하락 0.25% + 약세 4/5</span>
+                <span>Commission estimates exclude taxes and other charges.</span>
+                <span>Strategy requires actual Toss minute/daily history; no sample orders.</span>
+                <span>MA exit: 0.4% spread + 0.25% decline + 4/5 weak leaders</span>
                 <span>{t.activeTheme}: {activeTheme ? themeName(activeTheme, language) : "-"}</span>
-                <span>1위 테마 상승추세: {activeThemeIsUptrend ? "통과" : "대기"}</span>
+                <span>Leading theme uptrend: {activeThemeIsUptrend ? "Pass" : "Wait"}</span>
                 <span>{tradingMarketLabel}</span>
-                <span>TOP3 고르게 분산 · 정수 1주 단위</span>
+                <span>Balanced TOP3 · whole shares only</span>
                 <span>{t.stopLoss}</span>
-                <span>거래비용 {tradingCostText}</span>
+                <span>Commission estimate {tradingCostText}</span>
                 <span>{t.exitRule}</span>
               </div>
               <div className={styles.positionList}>
@@ -2342,8 +1760,7 @@ export default function StockDashboard() {
 
                           setMarketScope(stock.region);
                           setSelectedSymbol(stock.symbol);
-                          setActivePoint(null);
-                          setStatusMessage(`${stockName(stock, language)} 보유 종목 차트 확인`);
+                                                setStatusMessage(`${stockName(stock, language)} position selected`);
                         }}
                       >
                         <strong>
@@ -2386,7 +1803,7 @@ export default function StockDashboard() {
                   <div key={stock.symbol}>
                     <strong>{stock.symbol}</strong>
                     <span>{stockName(stock, language)}</span>
-                    <small>{stock.change > 0 ? "+" : ""}{stock.change.toFixed(2)}%</small>
+                    <small>{stock.change > 0 ? "+" : ""}{stock.source ? stock.change.toFixed(2) : "—"}%</small>
                   </div>
                 ))}
               </div>
@@ -2414,9 +1831,6 @@ export default function StockDashboard() {
                 >
                   <span>{themeName(theme, language)}</span>
                   <strong>{themeMomentum(theme).toFixed(2)}</strong>
-                  <svg className={styles.themeSparkline} viewBox="0 0 142 34" aria-hidden="true">
-                    <path d={themeSparklinePath(theme)} />
-                  </svg>
                   <small>{theme.stocks.slice(0, 3).map((stock) => stock.symbol).join(" / ")}</small>
                 </button>
               ))}

@@ -1,8 +1,8 @@
 :root {
   --background: #06030d;
   --foreground: #f5f3ff;
-  --font-sans: Arial, Helvetica, sans-serif;
-  --font-mono: Consolas, "Courier New", monospace;
+  --font-sans: "Pretendard", "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, monospace;
 }
 
 html {

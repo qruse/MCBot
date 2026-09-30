@@ -15,23 +15,14 @@ The repository currently contains the first development environment setup:
 - `artifacts/`: generated deliverables
 - `tmps/`: temporary files
 
-The frontend home screen includes a dark violet stock dashboard prototype with:
+The dashboard uses Toss Securities market data with local paper trading. The existing theme
+rotation strategy selects three stocks, applies risk controls, and records session profit every
+five seconds after an explicit start. Price charts and synthetic realtime ticks are removed.
 
-- Domestic and overseas market tabs
-- English and Korean language selection
-- Stock search over sample symbols
-- Watchlist add/remove behavior
-- Interactive SVG price chart with candlestick and line modes
-- Chart ranges: today live, 1D, 1W, 1M, 1Y, 5Y, and all
-- Portfolio signal and research note preview panels
-- Dark trading-desk layout with a market ticker, chart summary, and automation status rail
-
-Current market data is sample data only. Live brokerage or market data APIs are not connected yet.
-
-The backend is configured to use MongoDB as the primary NoSQL store for new persisted records.
-Local development expects MongoDB at `mongodb://localhost:27017` with database name `mcbot`.
-Korea Investment Securities Open API is used for the focused live quote watchlist: NVIDIA,
-Micron, Sandisk, Samsung Electronics, and SK Hynix.
+Broker requests are independent of profit sampling: batch prices refresh every 30 seconds, FX
+is cached for five minutes, and strategy history is loaded only during automation. Global request
+pacing, shared caches, and cooldowns protect the API. Credentials are stored only in backend/.env.
+See [AGENTS.md](AGENTS.md) for the consolidated provider setup, limits, and current behavior.
 
 ## Planned Features
 
@@ -64,7 +55,7 @@ Backend URLs:
 - `http://127.0.0.1:8000/`
 - `http://127.0.0.1:8000/health`
 - `http://127.0.0.1:8000/docs`
-- `http://127.0.0.1:8000/quotes/kis/watchlist`
+- `http://127.0.0.1:8000/brokers/toss/status`
 
 Create `backend/.env` for local MongoDB and brokerage API settings:
 
@@ -74,9 +65,9 @@ FRONTEND_ORIGIN=http://localhost:3001
 MONGO_URI=mongodb://localhost:27017
 MONGO_DB_NAME=mcbot
 MONGO_TIMEOUT_MS=2000
-KIS_ENV=paper
-KIS_APP_KEY=your-kis-app-key
-KIS_APP_SECRET=your-kis-app-secret
+MARKET_DATA_PROVIDER=toss
+TOSS_CLIENT_ID=
+TOSS_CLIENT_SECRET=
 ```
 
 ## Frontend

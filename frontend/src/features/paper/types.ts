@@ -1,4 +1,4 @@
-export type Market = "KR" | "US";
+export type Market = "KR" | "US" | "GLOBAL";
 export type Lifecycle = "idle" | "preparing" | "running" | "paused" | "halted";
 export type Condition = "ready" | "warming_up" | "market_closed" | "data_stale" | "provider_cooldown" | "authentication_error";
 
@@ -15,10 +15,12 @@ export interface Candle { close: number; closedAt: number; complete: boolean }
 export interface History { candles: Candle[]; receivedAt: number }
 export interface Fx { rate: number | null; validFrom: number; validUntil: number; receivedAt: number }
 export interface MarketSnapshot {
+  markets?: Record<"KR" | "US", MarketSnapshot>;
   id: string;
   market: Market;
   observedAt: number;
   quotes: Record<string, Quote | undefined>;
+  displayQuotes?: Record<string, Quote | undefined>;
   minute: Record<string, History | undefined>;
   daily: Record<string, History | undefined>;
   fx: Fx | null;
@@ -29,9 +31,13 @@ export interface MarketSnapshot {
 }
 export interface Config { market: Market; capital: number; stopPercent: number; sidecarPercent: number }
 export interface Position {
+  market?: "KR" | "US";
+  instrumentKey?: string;
   symbol: string;
   name?: string;
   strategyRef?: string;
+  entrySourceTime?: number;
+  entryId?: string;
   shares: number;
   entryPrice: number;
   entryFx: number;
@@ -39,6 +45,7 @@ export interface Position {
   entryCost: number;
 }
 export interface Fill {
+  market?: "KR" | "US"; currency?: "KRW" | "USD"; nativePrice?: number;
   id: string; snapshotId: string; timestamp: number; symbol: string;
   side: "buy" | "sell"; shares: number; priceKrw: number; fx: number;
   fee: number; gross: number; reason: string; netProfit: number | null;
@@ -55,6 +62,14 @@ export interface ProfitSample {
 }
 export interface Gap { start: number; end: number | null; reason: string }
 export interface Session {
+  legacyMarket?: "KR" | "US";
+  globalStatus?: {
+    cashBalances: { KRW: string; USD: string }; cashKrw: number | null; equity: number | null;
+    valuationFx: Fx | null;
+    marketEntryBlocks: Record<string, string>;
+    markets: Record<"KR" | "US", { marketOpen: boolean; marketClose: number; provider: string }>;
+    holdings: { instrumentKey: string; entryId: string; market: "KR" | "US"; amount: number | null; sourceTime: number | null; ageMs: number | null; closed: boolean }[];
+  };
   id: string; version: number; evaluatedAt: number; config: Config; lifecycle: Lifecycle; condition: Condition;
   reason: string; baseline: number | null; cash: number; positions: Position[];
   fills: Fill[]; events: SessionEvent[]; samples: ProfitSample[]; gaps: Gap[];
@@ -70,5 +85,5 @@ export interface Session {
 
 export interface CandidateGroup {
   group_id: string; name: string;
-  candidates: { symbol: string; name: string; rationale: string; evidence_ids: string[]; source_urls?: string[] }[];
+  candidates: { market?: "KR" | "US"; symbol: string; name: string; rationale: string; evidence_ids: string[]; source_urls?: string[] }[];
 }

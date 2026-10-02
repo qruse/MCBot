@@ -11,6 +11,11 @@ from app.paper.strategies.runtime import BUILTINS, StrategyError, digest, execut
 D = Decimal
 
 
+def closing_window(market):
+    # KR last trades can stop during the closing auction; preserve the freshness gate.
+    return 720000 if market == "KR" else 300000
+
+
 def candidate_groups(state):
     if state.get("isBenchmark"):
         return THEMES[state["config"]["market"]]
@@ -28,6 +33,10 @@ def candidate_groups(state):
             for g in state.get("standingGroups", [])
         }
     )
+    if state["config"]["market"] == "GLOBAL":
+        from app.paper.global_account import candidate
+        return {g["group_id"]: [candidate(state, c) for c in g["candidates"]]
+                for g in [*state.get("candidateGroups", []), *state.get("standingGroups", [])]}
     return groups
 
 
@@ -38,6 +47,10 @@ def candidate_symbols(state):
 
 
 def standing_symbols(state):
+    if state["config"]["market"] == "GLOBAL":
+        from app.paper.global_account import candidate
+        return [candidate(state, c) for g in state.get("standingGroups", [])
+                for c in g["candidates"]]
     return [c["symbol"] for group in state.get("standingGroups", []) for c in group["candidates"]]
 
 
@@ -50,6 +63,9 @@ def collection_symbols(state, now):
 
 
 def protected_symbols(state):
+    if state["config"]["market"] == "GLOBAL":
+        from app.paper.global_account import lot_key
+        return list(dict.fromkeys(lot_key(state, p) for p in state["positions"]))
     return (
         list(
             dict.fromkeys(
@@ -70,8 +86,11 @@ def policy_ref(policy):
 
 
 def strategy_context(s, data, now, groups, positions, can_enter):
-    symbols = set(data["quotes"]) | {p["symbol"] for p in positions}
-    return {
+    if data["market"] == "GLOBAL":
+        from app.paper.global_account import lot_key
+    symbols = set(data["quotes"]) | {
+        lot_key(s, p) if data["market"] == "GLOBAL" else p["symbol"] for p in positions}
+    context = {
         "protocol_version": 1,
         "now": now,
         "data": deepcopy(data),
@@ -85,7 +104,15 @@ def strategy_context(s, data, now, groups, positions, can_enter):
         "minute_ready": sorted(
             symbol for symbol in symbols if history_ready(symbol, "minute", data, now)
         ),
+        "portfolio": deepcopy((s.get("policy") or {}).get("portfolio")),
+        "portfolio_runtime": deepcopy(s.get("portfolioRuntime", {})),
     }
+    if data["market"] == "GLOBAL":
+        from app.paper.global_account import split
+        context["active_candidates"] = [k for k in candidate_symbols(s)
+                                        if data["markets"][split(k)[0]]["marketOpen"]]
+        context["cash_balances"] = deepcopy(s["cashBalances"])
+    return context
 
 
 def run_strategy(s, ref, expected_digest, context, now, runner):
@@ -110,6 +137,10 @@ def run_strategy(s, ref, expected_digest, context, now, runner):
 
 
 def instrument_issue(symbol, data, now):
+    if data["market"] == "GLOBAL":
+        from app.paper.global_account import native
+        item, raw = native(data, symbol)
+        return instrument_issue(raw, item, now)
     item = data.get("securities", {}).get(symbol)
     if not item:
         return "instrument_unverified"
@@ -130,6 +161,10 @@ def instrument_issue(symbol, data, now):
 
 
 def candidate_issue(symbol, data, now):
+    if data["market"] == "GLOBAL":
+        from app.paper.global_account import native
+        item, raw = native(data, symbol)
+        return candidate_issue(raw, {**item, "fx": data.get("fx")}, now)
     issue = instrument_issue(symbol, data, now)
     if issue:
         return issue
@@ -164,6 +199,9 @@ def fresh(value, now, age):
 
 
 def price(symbol, data, now):
+    if data["market"] == "GLOBAL":
+        from app.paper.global_account import executable
+        return executable(symbol, data, now)
     quote = data["quotes"].get(symbol)
     if not quote or not positive(quote["price"]):
         return None
@@ -189,6 +227,10 @@ def price(symbol, data, now):
 
 
 def history_ready(symbol, interval, data, now):
+    if data["market"] == "GLOBAL":
+        from app.paper.global_account import native
+        item, raw = native(data, symbol)
+        return history_ready(raw, interval, item, now)
     history = data[interval].get(symbol)
     minimum, age = (26, 1200000) if interval == "minute" else (80, 4200000)
     if not history or len(history["candles"]) < minimum:
@@ -225,12 +267,15 @@ def mark(position, data, now):
 
 
 def equity(state, data, now):
+    if state["config"]["market"] == "GLOBAL":
+        from app.paper.global_account import equity as global_equity
+        return global_equity(state, data, now)
     values = [mark(p, data, now) for p in state["positions"]]
     return None if any(v is None for v in values) else D(state["cash"]) + sum(values)
 
 
 def create(settings: Settings, session_id: str):
-    return {
+    state = {
         "id": session_id,
         "version": 0,
         "evaluatedAt": 0,
@@ -276,6 +321,10 @@ def create(settings: Settings, session_id: str):
         "feePolicy": "commission-only-v1",
         "costsComplete": False,
     }
+    if settings.market == "GLOBAL":
+        state.update(cashBalances={"KRW": str(settings.capital), "USD": "0"},
+                     valuationQuotes={}, valuationFx=None, continuousPaper=True)
+    return state
 
 
 def event(s, code, now, kind="decision", symbol=None):
@@ -318,6 +367,9 @@ def block(s, now):
 
 
 def assess(s, now):
+    if s["config"]["market"] == "GLOBAL":
+        from app.paper.global_account import assess as global_assess
+        return global_assess(s, now)
     data = s["latest"]
     s["evaluatedAt"] = now
     s["entryBlock"] = block(s, now)
@@ -326,6 +378,11 @@ def assess(s, now):
         symbol: candidate_issue(symbol, data, now) if data else "instrument_unverified"
         for symbol in selected
     }
+    if data and ((s.get("policy") or {}).get("portfolio") or {}).get("mode") == "adaptive":
+        for symbol in set(selected) - set(standing_symbols(s)):
+            item = data.get("securities", {}).get(symbol)
+            if item and item.get("securityType") not in ("STOCK", "FOREIGN_STOCK"):
+                s["candidateChecks"][symbol] = "general_etf_excluded"
     s["total"] = len(selected)
     s["ready"] = sum(issue is None for issue in s["candidateChecks"].values())
     if not data:
@@ -347,7 +404,10 @@ def assess(s, now):
     s["reason"] = s["condition"]
 
 
-def sell(s, position, data, now, reason):
+def sell(s, position, data, now, reason, shares=None):
+    if s["config"]["market"] == "GLOBAL":
+        from app.paper.global_account import sell as global_sell
+        return global_sell(s, position, data, now, reason, shares)
     value = mark(position, data, now)
     # Only a new source price after entry may liquidate a holding.
     q = data["quotes"].get(position["symbol"], {})
@@ -355,9 +415,20 @@ def sell(s, position, data, now, reason):
         event(s, "risk_unavailable", now, "risk", position["symbol"])
         return False
     p = price(position["symbol"], data, now)
-    gross = p * position["shares"]
+    count = position["shares"] if shares is None else shares
+    if not isinstance(count, int) or not 0 < count <= position["shares"]:
+        return False
+    fraction = D(count) / position["shares"]
+    cost = D(position["entryCost"]) * fraction
+    gross = p * count
+    value = gross * (1 - fee(data["market"]))
     s["cash"] = str(D(s["cash"]) + value)
-    s["positions"].remove(position)
+    if count == position["shares"]:
+        s["positions"].remove(position)
+    else:
+        position["entryCost"] = str(D(position["entryCost"]) - cost)
+        position["entryFee"] = str(D(position["entryFee"]) * (1 - fraction))
+        position["shares"] -= count
     s["fills"].append(
         {
             "id": f"{s['id']}-{len(s['fills']) + 1}",
@@ -365,13 +436,13 @@ def sell(s, position, data, now, reason):
             "timestamp": now,
             "symbol": position["symbol"],
             "side": "sell",
-            "shares": position["shares"],
+            "shares": count,
             "priceKrw": str(p),
             "fx": str(data["fx"]["rate"] if data["market"] == "US" else 1),
             "gross": str(gross),
             "fee": str(gross - value),
             "reason": reason,
-            "netProfit": str(value - D(position["entryCost"])),
+            "netProfit": str(value - cost),
             "policyVersion": position["policyVersion"],
             "proposalId": position["proposalId"],
             "entryId": position["entryId"],
@@ -380,6 +451,16 @@ def sell(s, position, data, now, reason):
         }
     )
     event(s, reason, now, "sell", position["symbol"])
+    if reason in (
+        "position_stop",
+        "sidecar_halt",
+        "ma_exit",
+        "theme_rollover",
+        "strategy_exit",
+        "portfolio_rotation",
+    ):
+        runtime = s.setdefault("portfolioRuntime", {})
+        runtime.setdefault("risk_blocks", {})[position["symbol"]] = now + 3600000
     return True
 
 
@@ -466,6 +547,9 @@ def buy(s, data, now, pending):
 
 
 def ingest(s, data, now, baseline=False, strategy_runner=None):
+    if s["config"]["market"] == "GLOBAL":
+        from app.paper.global_account import ingest as global_ingest
+        return global_ingest(s, data, now, strategy_runner)
     if (
         data["market"] != s["config"]["market"]
         or data["observedAt"] > now
@@ -502,7 +586,10 @@ def ingest(s, data, now, baseline=False, strategy_runner=None):
             continue
         if sidecar:
             reason = "sidecar_halt"
-        elif data["closingSoon"] or data["marketClose"] - now <= 300000:
+        elif (
+            data["closingSoon"]
+            or data["marketClose"] - now <= closing_window(s["config"]["market"])
+        ):
             reason = "closing_exit"
         elif value <= D(position["entryCost"]) * D(".98"):
             reason = "position_stop"
@@ -538,9 +625,15 @@ def ingest(s, data, now, baseline=False, strategy_runner=None):
         or s.get("strategyError")
         or not allowed
         or s["condition"] != "ready"
-        or data["marketClose"] - now <= 300000
+        or data["closingSoon"]
+        or data["marketClose"] - now <= closing_window(s["config"]["market"])
     ):
         s["pending"] = None
+        return
+    if (s.get("policy") or {}).get("portfolio"):
+        from app.paper.portfolio import rebalance
+
+        rebalance(s, data, now, strategy_runner)
         return
     if s["policy"]:
         # V3 explicitly admits the owner's standing group in addition to the researcher list.
@@ -605,20 +698,25 @@ def sample(s, now, force=False):
     if s["gaps"] and s["gaps"][-1]["end"] is None:
         s["gaps"][-1]["end"] = now
     profit = value - D(s["baseline"])
+    global_mode = s["config"]["market"] == "GLOBAL"
+    if global_mode:
+        from app.paper.global_account import lot_key
     point = {
         "timestamp": now,
         "snapshotId": data["id"],
         "segment": s["segment"],
         "equity": str(value),
         "cash": s["cash"],
-        "holdings": len(s["positions"]),
+        "holdings": len({p["symbol"] for p in s["positions"]}),
         "profit": str(profit),
         "returnPercent": str(profit / D(s["baseline"]) * 100),
         "priceSourceTime": min(
-            (data["quotes"][p["symbol"]]["sourceTime"] for p in s["positions"]), default=None
+            ((s.get("valuationQuotes", {}).get(lot_key(s, p), {}).get("sourceTime", 0)
+              if global_mode else data["quotes"][p["symbol"]]["sourceTime"])
+             for p in s["positions"]), default=None
         ),
         "fxSourceTime": data["fx"]["validFrom"]
-        if s["positions"] and data["market"] == "US"
+        if s["positions"] and data["market"] in ("US", "GLOBAL") and data.get("fx")
         else None,
     }
     s["samples"].append(point)

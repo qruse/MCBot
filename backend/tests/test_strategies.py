@@ -1,6 +1,7 @@
 """Paper strategy registration, source provenance, execution, replay and rollback."""
 
 from copy import deepcopy
+from decimal import Decimal
 
 import pytest
 from fastapi.testclient import TestClient
@@ -59,6 +60,48 @@ def test_registration_binds_exact_source_and_versions_are_immutable(service):
     assert service.strategies.register(candidate, report["id"], NOW) == item
     with pytest.raises(StrategyError, match="strategy_version_immutable"):
         service.strategies.register(changed, report["id"], NOW)
+
+
+def test_short_groups_are_versioned_and_allocate_with_explicit_weights(service):
+    legacy = register(service, draft())
+    source = SOURCE.replace(
+        '{symbol: "1"}',
+        '{s: "0.5" for s in context["groups"][group]} '
+        'if len(context["groups"][group]) == 2 else {symbol: "1"}',
+    )
+    candidate = draft(2, source).model_copy(update={"protocol_version": 2})
+    report = service.strategies.record(check_draft(candidate), NOW)
+    assert report["passed"] and len(report["cases"]) == 12
+    changed = candidate.model_copy(update={"protocol_version": 1})
+    with pytest.raises(StrategyError, match="strategy_checks_required"):
+        service.strategies.register(changed, report["id"], NOW)
+    module = service.strategies.register(candidate, report["id"], NOW)
+    context = scenarios(2)[2][1]  # KR two-member entry fixture.
+    assert service.strategies.run(legacy["ref"], context)["entry_group"] is None
+    assert service.strategies.run(module["ref"], context)["entry_group"] == "kr-semis"
+    invalid = 'def decide(c):\n    return {"entry_group": next(iter(c["groups"]))}'
+    with pytest.raises(StrategyError, match="invalid_strategy_output"):
+        execute(invalid, context)
+    start(service)
+    p = proposal(service, schema_version=5, playbook_id="test-allocation", strategy_version=2)
+    p["candidate_groups"][0]["candidates"] = p["candidate_groups"][0]["candidates"][:2]
+    p["allowed_symbols"] = p["allowed_symbols"][:2]
+    assert service.submit(p, p["proposal_id"], NOW)["status"] == "accepted"
+    for now in (NOW + 30000, NOW + 60000):
+        service.tick(now, demo_snapshot("KR", now))
+    state = service.store.current()["session"]
+    assert len(state["positions"]) == 2
+    fill = state["fills"][0]
+    assert fill["strategyRef"] == module["ref"]
+    assert Decimal(fill["fee"]) == Decimal(fill["gross"]) * Decimal(".00015")
+    spent = sum(Decimal(f["gross"]) + Decimal(f["fee"]) for f in state["fills"])
+    assert Decimal(state["cash"]) + spent == Decimal(state["config"]["capital"])
+    state_copy = deepcopy(state)
+    original, inputs, modules = service.replay_inputs(module["ref"], state["id"])
+    result = replay(original, inputs, modules, module["ref"])
+    assert result["results"][0]["fills"] == 2 and result["results"][0]["errors"] == 0
+    assert result["results"][1]["fills"] == 0  # v1 reference cannot enter the short group.
+    assert service.store.current()["session"] == state_copy
 
 
 def test_registered_code_executes_with_pinned_versions_and_hard_stops(service):

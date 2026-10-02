@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 
 from app import toss
 from app.paper.contracts import STANDING_INVERSE, symbols
-from app.paper.domain import instrument_issue, positive
+from app.paper.domain import closing_window, instrument_issue, positive
 
 
 def timestamp(value):
@@ -47,10 +47,43 @@ def calendar_state(calendar, market, now):
     return {
         "marketOpen": bool(current),
         "marketClose": close,
-        "closingSoon": bool(current) and close - now <= 300000,
+        "closingSoon": bool(current) and close - now <= closing_window(market),
         "expectedDailyClose": completed[0][0] if completed else 0,
         "completedDate": completed[0][1] if completed else "",
     }
+
+
+class GlobalCollector:
+    def __init__(self):
+        self.collectors = {market: Collector(market) for market in ("KR", "US")}
+        self.fx = None
+        self.fx_updated = 0
+        self.fx_retry_at = 0
+
+    async def collect(self, held, candidates=(), reference=()):
+        from app.paper.global_account import split
+        for market, collector in self.collectors.items():
+            def members(items, native_market=market):
+                return [split(s)[1] for s in items if split(s)[0] == native_market]
+            await collector.collect(members(held), members(candidates), members(reference))
+        now = int(time.time() * 1000)
+        if (now >= self.fx_retry_at and any(calendar_state(c.calendar, m, now)["marketOpen"]
+                for m, c in self.collectors.items()) and now - self.fx_updated >= 300000):
+            try:
+                self.fx = await toss.global_fx()
+                self.fx_updated = int(time.time() * 1000)
+                self.fx_retry_at = 0
+            except Exception:
+                # Preserve actual FX source times. An error cannot manufacture fresh currency.
+                wait = toss.status().get("retry_after_seconds") or 60
+                self.fx_retry_at = int(time.time() * 1000) + max(1, wait) * 1000
+
+    def snapshot(self, now):
+        from app.paper.global_account import combine
+        markets = {m: c.snapshot(now) for m, c in self.collectors.items()}
+        fx = max((v for v in (markets["US"].get("fx"), self.fx) if v),
+                 key=lambda v: (v["validFrom"], v["receivedAt"]), default=None)
+        return combine(markets, now, fx)
 
 
 class Collector:
@@ -59,6 +92,7 @@ class Collector:
         self.calendar = None
         self.prices = None
         self.histories = {}
+        self.history_attempts = {}
         self.securities = {}
         self.quote_scope = ()
         self.updated = {}
@@ -73,6 +107,9 @@ class Collector:
         reference = symbols(self.market) if reference is None else reference
         ordered = list(dict.fromkeys([*held, *candidates, *reference]))
         self.histories = {key: value for key, value in self.histories.items() if key in ordered}
+        self.history_attempts = {
+            key: value for key, value in self.history_attempts.items() if key in ordered
+        }
         self.securities = {key: value for key, value in self.securities.items() if key in ordered}
         metadata_due = any(now - self.updated.get(f"stock:{s}", 0) >= 300000 for s in ordered)
         eligible = [
@@ -81,8 +118,13 @@ class Collector:
             if not instrument_issue(s, {"market": self.market, "securities": self.securities}, now)
         ]
         quote_symbols = list(dict.fromkeys([*held, *eligible]))
+        quote_interval = (
+            toss.CLOSING_QUOTE_POLL_SECONDS if state.get("closingSoon")
+            else toss.QUOTE_POLL_SECONDS if held else toss.FLAT_QUOTE_POLL_SECONDS
+        )
         quotes_due = (
-            now - self.updated.get("prices", 0) >= 30000 or tuple(quote_symbols) != self.quote_scope
+            now - self.updated.get("prices", 0) >= quote_interval * 1000
+            or tuple(quote_symbols) != self.quote_scope
         )
         try:
             if now - self.updated.get("calendar", 0) >= 3600000:
@@ -108,22 +150,27 @@ class Collector:
                 self.quote_scope = tuple(quote_symbols)
                 self.updated["prices"] = int(time.time() * 1000)
             elif state["marketOpen"]:
-                for symbol in eligible:
-                    if now - self.updated.get(symbol, 0) >= 900000:
-                        self.histories[symbol] = await toss.strategy(symbol)
-                        self.updated[symbol] = int(time.time() * 1000)
-                        break
+                due = [s for s in eligible if now - self.updated.get(s, 0) >= 900000]
+                if due:
+                    # A failed symbol must not monopolize every recovery attempt.
+                    symbol = min(due, key=lambda s: self.history_attempts.get(s, 0))
+                    self.history_attempts[symbol] = now
+                    self.histories[symbol] = await toss.strategy(symbol)
+                    self.updated[symbol] = int(time.time() * 1000)
             status = toss.status()
             self.provider = status["state"]
             if self.provider == "cooldown":
-                self.retry_at = now + max(60, status["retry_after_seconds"] or 60) * 1000
+                self.retry_at = int(time.time() * 1000) + max(
+                    1, status["retry_after_seconds"] or 60
+                ) * 1000
         except Exception:
             # Do not export response bodies or credentials. The adapter persists its cooldown.
             status = toss.status()
             self.provider = (
                 "authentication_error" if status["state"] == "authentication_error" else "cooldown"
             )
-            self.retry_at = now + max(60, status["retry_after_seconds"] or 60) * 1000
+            wait = status["retry_after_seconds"] if status["state"] == "cooldown" else 60
+            self.retry_at = int(time.time() * 1000) + max(1, wait or 60) * 1000
 
     def snapshot(self, now):
         state = calendar_state(self.calendar, self.market, now)
@@ -131,6 +178,7 @@ class Collector:
             "market": self.market,
             "observedAt": now,
             "quotes": {},
+            "displayQuotes": {},
             "minute": {},
             "daily": {},
             "fx": None,
@@ -174,6 +222,18 @@ class Collector:
                 "receivedAt": timestamp(quality.get("received_at")),
                 "changePercent": str((p / prior - 1) * 100) if p and prior else None,
             }
+            # Dated display marks are separate from executable quotes. Never renew source time.
+            display_price = positive(quote.get("lastPrice"))
+            source_time = timestamp(quote.get("timestamp"))
+            if (
+                display_price
+                and quote.get("currency") == ("KRW" if self.market == "KR" else "USD")
+                and 0 < source_time <= now
+                and now - source_time <= 7 * 86400000
+            ):
+                data["displayQuotes"][symbol] = {
+                    **data["quotes"][symbol], "price": str(display_price),
+                }
         fx = (self.prices or {}).get("fx_quality")
         if fx and fx["valid"]:
             data["fx"] = {
@@ -222,6 +282,8 @@ def demo_snapshot(market, now):
             "currency": "KRW" if market == "KR" else "USD",
             "status": "ACTIVE",
             "securityType": "STOCK" if index < 3 else "ETF",
+            "leverageFactor": "-1" if symbol in {s[0] for s in STANDING_INVERSE[market]}
+            else None,
             "receivedAt": observed,
             "koreanMarketDetail": {"liquidationTrading": False, "krxTradingSuspended": False},
         }

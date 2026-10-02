@@ -29,13 +29,86 @@ def digest(source):
     return hashlib.sha256(source.encode()).hexdigest()
 
 
+def prepare_context(context, protocol_version=1):
+    """Adapt immutable registered versions without reinterpreting their group contract."""
+    adapted = deepcopy(context)
+    adapted["protocol_version"] = protocol_version
+    if adapted["data"]["market"] == "GLOBAL" and protocol_version < 5:
+        if adapted["can_enter"]:
+            raise StrategyError("global_protocol_required")
+        market = adapted.get("active_market")
+        if market not in ("KR", "US"):
+            raise StrategyError("legacy_market_required")
+        adapted["data"] = deepcopy(adapted["data"]["markets"][market])
+        adapted["groups"] = {k: [s.split(":", 1)[1] for s in v if s.startswith(market + ":")]
+                             for k, v in adapted["groups"].items()}
+        for field in ("candidate_ready", "minute_ready"):
+            adapted[field] = [s.split(":", 1)[1] for s in adapted[field]
+                              if s.startswith(market + ":")]
+        adapted["active_symbols"] = [p["symbol"] for p in adapted["positions"]]
+    if protocol_version < 3:
+        adapted.pop("portfolio", None)
+        adapted.pop("portfolio_runtime", None)
+    if protocol_version == 1:
+        adapted["groups"] = {
+            name: members for name, members in adapted["groups"].items() if len(members) == 3
+        }
+    return adapted
+
+
 def validate_signal(value, context):
     try:
-        signal = Signal.model_validate(value)
+        protocol = context.get("protocol_version", 1)
+        plan = context.get("portfolio") or {}
+        permitted_targets = {"CASH"} | {s for g in context["groups"].values() for s in g}
+        if protocol >= 4:
+            permitted_targets.update((f"{item['market']}:{item['symbol']}" if protocol == 5
+                                      else item["symbol"]) for item in plan.get("retirements", []))
+        signal = Signal.model_validate({"rotate": False, **value} if protocol >= 3 else value)
+        if protocol >= 3 and (
+            signal.entry_group is not None or signal.weights or signal.exits or signal.rotate
+        ):
+            raise ValueError()
+        if signal.target_weights:
+            if (
+                protocol not in (3, 4, 5)
+                or not context["can_enter"]
+                or signal.entry_group is not None
+                or signal.weights
+                or signal.exits
+                or signal.rotate
+                or signal.target_weights
+                != {
+                    k: Decimal(v)
+                    for k, v in (context.get("portfolio") or {}).get("target_weights", {}).items()
+                }
+                or set(signal.target_weights) != permitted_targets
+                or any(
+                    not w.is_finite()
+                    or w < 0
+                    or w > 1
+                    or w.as_tuple().exponent < -8
+                    or protocol == 3
+                    and (w == 0 or w == 1)
+                    for w in signal.target_weights.values()
+                )
+                or "CASH" not in signal.target_weights
+                or signal.target_weights["CASH"] < 0
+                or protocol == 3
+                and signal.target_weights["CASH"] == 0
+                or sum(signal.target_weights.values()) != Decimal(1)
+            ):
+                raise ValueError()
         if not set(signal.exits) <= {p["symbol"] for p in context["positions"]}:
             raise ValueError()
         if signal.entry_group is not None:
             if not context["can_enter"] or signal.entry_group not in context["groups"]:
+                raise ValueError()
+            if (
+                context.get("protocol_version", 1) == 2
+                and len(context["groups"][signal.entry_group]) < 3
+                and not signal.weights
+            ):
                 raise ValueError()
         if signal.weights:
             if signal.entry_group is None:
@@ -49,7 +122,10 @@ def validate_signal(value, context):
                 raise ValueError()
             if sum(signal.weights.values()) != Decimal(1):
                 raise ValueError()
-        return signal.model_dump(mode="json")
+        result = signal.model_dump(mode="json")
+        if context.get("protocol_version", 1) < 3:
+            result.pop("target_weights")
+        return result
     except (ValidationError, ValueError, TypeError) as exc:
         raise StrategyError("invalid_strategy_output") from exc
 

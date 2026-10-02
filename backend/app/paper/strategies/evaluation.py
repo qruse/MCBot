@@ -6,7 +6,7 @@ from decimal import Decimal
 
 from app.paper import domain
 from app.paper.contracts import Settings
-from app.paper.strategies.runtime import StrategyError, digest, execute
+from app.paper.strategies.runtime import StrategyError, digest, execute, prepare_context
 
 
 def replay(original, inputs, modules, target_ref):
@@ -14,13 +14,16 @@ def replay(original, inputs, modules, target_ref):
         item = modules.get(ref)
         if not item or (expected_digest and digest(item["source"]) != expected_digest):
             raise StrategyError("strategy_digest_mismatch")
-        return execute(item["source"], context)
+        return execute(item["source"], prepare_context(context, item.get("protocol_version", 1)))
 
     results = []
     for ref in (target_ref, "theme-top3-v1@1"):
         module = modules[ref]
+        global_reference = original["config"]["market"] == "GLOBAL" and ref == "theme-top3-v1@1"
+        market = (original.get("legacyMarket", "KR") if global_reference
+                  else original["config"]["market"])
         settings = Settings(
-            market=original["config"]["market"],
+            market=market,
             capital=original["config"]["capital"],
             source=original["source"],
             mode="adaptive",
@@ -31,8 +34,14 @@ def replay(original, inputs, modules, target_ref):
             candidateGroups=deepcopy(original.get("candidateGroups", [])),
             standingGroups=deepcopy(original.get("standingGroups", [])),
         )
+        if global_reference:
+            from app.paper.contracts import THEMES
+            state["candidateGroups"] = [
+                {"group_id": k, "name": k, "candidates": [{"symbol": s} for s in members]}
+                for k, members in THEMES[market].items()]
+            state["standingGroups"] = []
         state["policy"] = {
-            "schema_version": 4,
+            "schema_version": (original.get("policy") or {}).get("schema_version", 4),
             "playbook_id": module["strategy_id"],
             "strategy_version": module["version"],
             "strategy_digest": module["digest"],
@@ -45,9 +54,16 @@ def replay(original, inputs, modules, target_ref):
             "valid_from": 0,
             "expires_at": 2**53,
         }
+        if module.get("protocol_version", 1) >= 3:
+            state["policy"]["portfolio"] = deepcopy((original.get("policy") or {}).get("portfolio"))
+            state["policy"]["max_exposure_percent"] = (original.get("policy") or {}).get(
+                "max_exposure_percent", "100"
+            )
         peak = Decimal(settings.capital)
         drawdown = Decimal(0)
         for data in inputs:
+            if global_reference and data["market"] == "GLOBAL":
+                data = data["markets"][market]
             now = data["observedAt"]
             domain.ingest(state, data, now, strategy_runner=runner)
             point = domain.sample(state, now, force=True)
@@ -79,6 +95,7 @@ def replay(original, inputs, modules, target_ref):
         "source_digest": modules[target_ref]["digest"],
         "results": results,
         "profitability_validated": False,
+        "comparable_reference": original["config"]["market"] != "GLOBAL",
         "limitations": (
             "Current universe on past inputs, flat start, commission only; "
             "not out-of-sample evidence."

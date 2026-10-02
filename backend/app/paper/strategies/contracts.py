@@ -15,6 +15,7 @@ class Draft(Contract):
     name: str = Field(min_length=1, max_length=120)
     hypothesis: Text
     failure_criterion: Text
+    protocol_version: Literal[1, 2, 3, 4, 5] = 1
     source: str = Field(min_length=1, max_length=64000)
 
 
@@ -29,6 +30,7 @@ class Signal(Contract):
         default_factory=dict, max_length=3
     )
     weights: dict[str, Decimal] = Field(default_factory=dict, max_length=3)
+    target_weights: dict[str, Decimal] = Field(default_factory=dict, max_length=17)
     rotate: StrictBool = True
     reason: str = Field(default="", max_length=500)
 

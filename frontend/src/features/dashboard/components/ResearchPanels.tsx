@@ -4,28 +4,71 @@ import { useState } from "react";
 import type { Research, ServerSession, Settings, Snapshot } from "../hooks/useServerSession";
 import { paperRequest } from "../hooks/useServerSession";
 import { krw, signed, time, label } from "../format";
-import { message } from "../messages";
+import { instrumentNames, message } from "../messages";
 import { Summary } from "./Summary";
 import styles from "../dashboard.module.css";
 
-const playbook = (id?: string, name?: string) => id?.startsWith("demo-roundtrip") ? "데모 매수·청산" : id === "theme-top3-v1" ? "테마 추세" : id === "cash-v1" ? "현금 대기" : name ?? "전략 없음";
-const blocks: Record<string, string> = { observer: "관찰 모드", awaiting_review: "전략 검토 대기", policy_expired: "전략 만료 · 신규 매수 중지", cash_policy: "현금 유지", entries_paused: "신규 매수 중지", none: "진입 조건 확인 중" };
+const playbook = (id?: string, name?: string) => id?.startsWith("demo-roundtrip") ? "데모 매수·청산" : id === "adaptive-allocation" ? "종목 · 테마 비중 조정" : id === "allocation-band" ? "자산 배분 · 비중 조정" : id === "patient-trend" ? "추세 · 자동 교체 없음" : id === "theme-top3-v1" ? "테마 추세" : id === "cash-v1" ? "신규 매수 보류" : name ?? "전략 없음";
+const blocks: Record<string, string> = { observer: "관찰 모드", awaiting_review: "전략 검토 대기", policy_expired: "전략 만료 · 신규 매수 중지", cash_policy: "전략 판단으로 신규 매수 보류", entries_paused: "신규 매수 중지", none: "진입 조건 확인 중" };
 const receiptLabels: Record<string, string> = { accepted: "적용", observed: "관찰", rejected: "거절" };
+
+function entryStatus(s: ServerSession, provider?: Research["providerStatus"]) {
+  if (s.condition === "market_closed") return "장 마감 · 시세·매매 대기";
+  if (provider?.state === "cooldown") {
+    const cause = provider.last_failure?.http_status === 429 ? "토스 호출 제한" : "토스 시세 재시도 대기";
+    const retry = provider.retry_after_seconds ? ` · ${time(s.evaluatedAt + provider.retry_after_seconds * 1000)} 재시도` : "";
+    return `${cause}${retry}${s.entryBlock === "policy_expired" ? " · 전략 갱신 대기" : ""}`;
+  }
+  if (s.entryBlock !== "none") return blocks[s.entryBlock] ?? message(s.entryBlock);
+  if (s.condition !== "ready") {
+    const blocked = Object.entries(s.candidateChecks ?? {}).filter(([, issue]) => issue);
+    if (s.condition === "warming_up" && blocked.length) {
+      const [symbol, issue] = blocked[0];
+      return `${instrumentNames[symbol] ?? symbol} · ${message(issue!)}${blocked.length > 1 ? ` 외 ${blocked.length - 1}종` : ""}`;
+    }
+    return message(s.reason);
+  }
+  if (s.pending) return s.portfolioStatus ? "비중 조정 대기 · 다음 시세 확인" : "매수 대기 · 다음 시세 확인";
+  if (s.portfolioStatus) return s.portfolioStatus.reason === "hourly_limit" ? `다음 비중 점검 ${time(s.portfolioStatus.nextRebalanceAt)}` : "목표 비중 유지";
+  if (!s.positions.length && s.strategyDecision?.entry_group === null) return "매수 조건 미충족";
+  return "진입 조건 확인 중";
+}
 
 export function StrategyPanel({ session: s, research: r }: { session: ServerSession; research: Research }) {
   const demoComplete = s.source === "demo" && s.policy?.playbook_id.startsWith("demo-roundtrip") && !s.positions.length && s.fills.some(fill => fill.side === "sell");
   const late = r.lastRun && !r.lastRun.completed && s.evaluatedAt > r.lastRun.deadline;
-  return <section className={styles.panel} aria-labelledby="strategy-title">
-    <div className={styles.panelHead}><h2 id="strategy-title">현재 전략</h2>{s.policy && <span className={styles.badge}>v{s.policy.strategy_version ?? 1}</span>}</div>
-    <div className={styles.strategyBrief}><strong>{playbook(s.policy?.playbook_id, s.policy?.strategy_name)}</strong>
-      <dl><div><dt>최근 검토</dt><dd>{time(r.lastRun?.completed ?? r.lastRun?.started)}</dd></div><div><dt>{demoComplete ? "데모 상태" : "유효 기한"}</dt><dd>{demoComplete ? "완료" : time(s.policy?.expires_at)}</dd></div><div><dt>다음 검토 기준</dt><dd>{time(r.nextReviewDue)}</dd></div></dl>
-      {s.policy && <details className={styles.inlineDetails}><summary>선택 근거</summary><p>{s.policy.rationale}</p></details>}
+  const expired = !!s.policy && s.policy.expires_at <= s.evaluatedAt;
+  const active = s.lifecycle === "running" || s.lifecycle === "preparing";
+  const held = new Set(s.positions.map(p => p.symbol)).size;
+  const blocked = Object.entries(s.candidateChecks ?? {}).filter(([, issue]) => issue);
+  const stamp = (at?: number | null) => at ? new Date(at).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }) : "—";
+  const status = s.strategyError ? "전략 오류" : !active ? label(s.lifecycle) : !s.policy ? "검토 대기" : expired ? "검토 만료" : s.mode === "observer" ? "관찰 중" : s.policy.playbook_id === "cash-v1" ? "매수 보류" : "적용 중";
+  return <section className={`${styles.panel} ${styles.strategyOverview}`} aria-labelledby="strategy-title" data-testid="strategy-overview">
+    <div className={styles.panelHead}><h2 id="strategy-title">현재 전략</h2><span className={`${styles.badge} ${active && !expired && !s.strategyError ? styles.ready : styles.waiting}`}>{status}</span></div>
+    <div className={styles.strategyOverviewBody}>
+      <div className={styles.strategyIntent}><h3>{playbook(s.policy?.playbook_id, s.policy?.strategy_name)}</h3>
+        <p>{!active ? "매매·위험 점검 중지" : s.strategyError ? "신규 매수 중지 · 유효한 시세로 손절 점검" : s.mode === "observer" ? "제안 기록만 · 주문 없음" : expired ? "새 판단을 기다리는 중 · 신규 매수 중지" : s.policy?.playbook_id === "cash-v1" ? held ? `기존 ${held}종목 유지 · 추가 매수 없음` : "보유 종목 없음 · 추가 매수 없음" : entryStatus(s, r.providerStatus)}</p>
+        <div className={styles.strategyFacts}><span>보유 <b>{held}종목</b></span><span>현금 <b>{krw(s.cash)}</b></span><span>목표 비중 <b>{s.portfolioStatus ? "설정됨" : "미설정"}</b></span></div>
+      </div>
+      <dl className={styles.reviewSchedule}>
+        <div><dt>최근 적용</dt><dd>{stamp(r.receipts.find(item => item.proposal_id === s.policy?.proposal_id && item.status === "accepted")?.timestamp)}</dd></div>
+        <div><dt>다음 검토 예정</dt><dd>{stamp(r.nextReviewDue)}</dd></div>
+        <div><dt>이번 판단 유효</dt><dd className={expired ? styles.loss : undefined}>{demoComplete ? "데모 완료" : stamp(s.policy?.expires_at)}</dd></div>
+      </dl>
     </div>
+    <div className={styles.strategyDataStatus}><span>매매 데이터</span><strong>{s.condition === "market_closed" ? "장 마감" : blocked.length ? `${blocked.length}종목 준비 대기` : s.total ? `${s.ready}/${s.total}종목 준비` : "확인 대기"}</strong>{!!blocked.length && <span>{blocked.map(([symbol]) => instrumentNames[symbol] ?? symbol).join(" · ")}</span>}{r.providerStatus?.state === "cooldown" && <span className={styles.loss}>API 재시도 대기</span>}</div>
+    {s.policy && <details className={styles.strategySource}><summary>판단 원문 · 출처</summary>
+      <div className={styles.strategyOriginal}><h3>선택 이유</h3><p>{s.policy.rationale}</p><h3>가설 · 변경 조건</h3><p>{s.policy.hypothesis}</p><h3>반대 근거</h3><p>{s.policy.counterevidence}</p>
+        {s.policy.evidence?.map(e => <article key={e.evidence_id}><a href={e.source_url} target="_blank" rel="noopener noreferrer">{e.publisher} ↗</a><small>게시 {stamp(e.published_at)} · 확인 {stamp(e.retrieved_at)}</small><p>{e.claim}</p>{e.uncertainty && <p>{e.uncertainty}</p>}</article>)}
+        <small>검토 #{s.policyVersion} · 코드 {s.policy.playbook_id}@{s.policy.strategy_version ?? 1}</small>
+        {s.strategyDecision?.ref === `${s.policy.playbook_id}@${s.policy.strategy_version ?? 1}` && <p>최근 코드 판단 · {stamp(s.strategyDecision.timestamp)} · {s.strategyDecision.reason}</p>}
+      </div>
+    </details>}
     {late && <p className={styles.warning}>전략 검토 지연</p>}
   </section>;
 }
 
-export function ServerControls({ session: s, busy, command }: { session: ServerSession; busy: boolean; command: (action: string, settings?: Settings) => Promise<void> }) {
+export function ServerControls({ session: s, provider, busy, command }: { session: ServerSession; provider?: Research["providerStatus"]; busy: boolean; command: (action: string, settings?: Settings) => Promise<void> }) {
   const [settings, setSettings] = useState<Settings>({ market: s.config.market, capital: String(s.config.capital), source: s.source, mode: s.mode });
   const [confirm, setConfirm] = useState(false);
   const active = ["running", "preparing"].includes(s.lifecycle);
@@ -35,17 +78,18 @@ export function ServerControls({ session: s, busy, command }: { session: ServerS
   const dirty = settings.market !== s.config.market || settings.source !== s.source || settings.mode !== s.mode || Number(settings.capital) !== s.config.capital;
   return <section className={styles.panel} data-testid="session-controls"><div className={styles.panelHead}><h2>운용 상태</h2><span className={`${styles.badge} ${active ? styles.ready : ""}`} data-testid="session-lifecycle">{label(s.lifecycle)}</span></div>
     <div className={styles.controlBody}>
-      <div className={styles.operationState}><strong>{s.strategyError ? "전략 오류" : s.lifecycle === "halted" ? "위험 한도 도달" : s.lifecycle === "paused" ? "운용 정지" : idle ? "시작 전" : demoComplete ? "데모 완료" : s.positions.length ? `${s.positions.length}종목 보유` : "현금 대기"}</strong><span>{s.lifecycle === "paused" ? "매매·위험 점검 중지" : s.strategyError ? "신규 매수 중지 · 손절 점검 유지" : demoComplete ? "매수·청산 완료 · 현금 유지" : s.entryBlock !== "none" ? blocks[s.entryBlock] ?? message(s.entryBlock) : s.condition !== "ready" ? message(s.reason) : "진입 조건 확인 중"}</span></div>
-      <details className={styles.settingsFold} open={idle}><summary>설정 <span>{s.config.market === "KR" ? "국내" : "미국"} · {krw(s.config.capital)}</span></summary>
+      <div className={styles.operationState}><strong>{s.strategyError ? "전략 오류" : s.lifecycle === "halted" ? "위험 한도 도달" : s.lifecycle === "paused" ? "운용 정지" : idle ? "시작 전" : active && provider?.state === "cooldown" ? "시세 수집 대기" : demoComplete ? "데모 완료" : s.positions.length ? `${new Set(s.positions.map(p => p.symbol)).size}종목 보유` : "현금 대기"}</strong><span>{s.lifecycle === "paused" ? "매매·위험 점검 중지" : s.strategyError ? "신규 매수 중지 · 손절 점검 유지" : demoComplete ? "매수·청산 완료 · 현금 유지" : entryStatus(s, provider)}</span></div>
+      {s.globalStatus && <div className={styles.panelHead}>{(["KR", "US"] as const).map(market => <span key={market} className={styles.subtle}>{market === "KR" ? "국내" : "미국"} · {s.globalStatus!.markets[market]?.marketOpen ? "개장" : "장 마감"}{s.globalStatus!.marketEntryBlocks[market] ? " · 청산 대기" : ""}</span>)}</div>}
+      <details className={styles.settingsFold} open={idle}><summary>설정 <span>{s.config.market === "GLOBAL" ? "국내 · 미국" : s.config.market === "KR" ? "국내" : "미국"} · {krw(s.config.capital)}</span></summary>
       <label className={styles.field}><span>시세 데이터</span><select aria-label="시세 데이터" disabled={!idle || busy} value={settings.source} onChange={e => setSettings({ ...settings, source: e.target.value as Settings["source"] })}><option value="toss">토스증권 실제 시세 · 모의매매</option><option value="demo">예시 데이터 · 검증 전용</option></select></label>
       <label className={styles.field}><span>운용 방식</span><select aria-label="운용 방식" disabled={!idle || busy} value={settings.mode} onChange={e => setSettings({ ...settings, mode: e.target.value as Settings["mode"] })}><option value="observer">연구 관찰 · 제안 기록만</option><option value="adaptive">검증된 제안으로 모의매매</option></select></label>
-      <label className={styles.field}><span>거래 시장</span><select aria-label="거래 시장" disabled={!idle || busy} value={settings.market} onChange={e => setSettings({ ...settings, market: e.target.value as Settings["market"] })}><option value="KR">국내 주식</option><option value="US">미국 주식</option></select></label>
+      <label className={styles.field}><span>거래 시장</span><select aria-label="거래 시장" disabled={!idle || busy} value={settings.market} onChange={e => setSettings({ ...settings, market: e.target.value as Settings["market"] })}><option value="GLOBAL">국내 · 미국</option><option value="KR">국내 주식</option><option value="US">미국 주식</option></select></label>
       <label className={styles.field}><span>시작 자금 · 원화</span><input aria-label="시작 자금" type="number" min="1000000" max="1000000000000" disabled={!idle || busy} value={settings.capital} onChange={e => setSettings({ ...settings, capital: e.target.value })} /></label>
       </details>
       {dirty && idle ? <button className={styles.primary} disabled={busy || !valid} onClick={() => command("new", settings)}>설정 저장</button> : <button className={styles.primary} disabled={busy || s.lifecycle === "halted"} onClick={() => command(active ? "pause" : idle ? "start" : "resume")}>{busy ? "적용 중…" : active ? "시뮬레이션 정지" : idle ? "모의매매 시작" : "모의매매 재개"}</button>}
       {active && s.mode === "adaptive" && <button className={styles.secondary} style={{ marginTop: 10 }} disabled={busy} onClick={() => command(s.entriesPaused ? "resume_entries" : "pause_entries")}>{s.entriesPaused ? "신규 매수 허용" : "신규 매수 중지"}</button>}
       <div className={styles.riskStrip}><span>손절 <b>2%</b></span><span>전체 손실 중단 <b>5%</b></span></div>
-      <details className={styles.inlineDetails}><summary>운용 · 비용 기준</summary><p>창을 닫아도 실행 · 서버 재시작 시 정지</p><p>정지하면 위험 점검도 중지됩니다.</p><p>장 마감 5분 전 청산</p><p>{s.config.market === "KR" ? "KRX 수수료 매수·매도 각각 0.015%" : "수수료 매수·매도 각각 0.1%"}</p><p>세금·슬리피지 등 기타 비용 미반영</p></details>
+      <details className={styles.inlineDetails}><summary>운용 · 비용 기준</summary><p>창을 닫아도 실행 · 서버 재시작 시 정지</p><p>정지하면 위험 점검도 중지됩니다.</p><p>{s.config.market === "GLOBAL" ? "국내 마감 12분 전 · 미국 5분 전 청산" : s.config.market === "KR" ? "장 마감 12분 전 청산" : "장 마감 5분 전 청산"}</p>{s.continuousPaper && <p>장 마감 후 다음 개장까지 대기</p>}<p>{s.config.market === "GLOBAL" ? "KRX 0.015% · 미국 0.1%, 매수·매도 각각" : s.config.market === "KR" ? "KRX 수수료 매수·매도 각각 0.015%" : "수수료 매수·매도 각각 0.1%"}</p>{s.globalStatus && <p>환율 {s.globalStatus.valuationFx?.rate ? `${krw(s.globalStatus.valuationFx.rate)} · ${time(s.globalStatus.valuationFx.validFrom)}` : "대기"} · 모의 환전</p>}<p>세금·슬리피지·환전 비용 미반영</p></details>
       <div className={styles.resetArea}>{confirm ? <div className={styles.confirm}><p>기존 기록을 보관하고 새 세션을 만들까요?</p><button disabled={busy} onClick={async () => { await command("new", settings); setConfirm(false); }}>보관 후 새 세션</button><button onClick={() => setConfirm(false)}>취소</button></div> : <button className={styles.secondary} disabled={busy || active || idle || !!s.positions.length} onClick={() => setConfirm(true)}>기록 보관 · 새 세션</button>}</div>
     </div>
   </section>;
@@ -56,7 +100,7 @@ export function ImprovementPanel({ session: s, research: r }: { session: ServerS
   return <section className={styles.panel} aria-labelledby="improvement-title"><div className={styles.panelHead}><h2 id="improvement-title">성과 비교</h2><span className={styles.badge}>등록 실험 {r.trialCount}</span></div>
     <div className={styles.tableWrap}><table><thead><tr><th>비교 대상</th><th>수수료 반영 손익</th><th>기준</th></tr></thead><tbody>
       <tr><td>현재 운용</td><td>{latest ? signed(latest.profit) : "기록 대기"}</td><td>{s.mode === "observer" ? "관찰 · 현금" : "Codex 전략 선택"}</td></tr>
-      <tr><td>고정 기준 전략</td><td>{r.benchmark ? signed(r.benchmark.profit) : "기록 대기"}</td><td>고정 후보 · 같은 시세·자금·수수료·위험 규칙</td></tr>
+      <tr><td>{s.config.market === "GLOBAL" ? "국내 고정 기준" : "고정 기준 전략"}</td><td>{r.benchmark ? signed(r.benchmark.profit) : "기록 대기"}</td><td>{s.config.market === "GLOBAL" ? "단일 시장 참고 · 전체 운용과 직접 비교하지 않음" : "고정 후보 · 같은 시세·자금·수수료·위험 규칙"}</td></tr>
       <tr><td>기준 대비 차이</td><td>{r.paired && r.difference !== null ? signed(r.difference) : "동시점 기록 대기"}</td><td>{r.paired ? time(r.benchmark?.timestamp) : "동일 시각의 평가만 비교"}</td></tr>
       <tr><td>현금 유지</td><td>{latest ? krw(0) : "기록 대기"}</td><td>시작 자금 유지 · 이자 미반영</td></tr>
     </tbody></table></div>

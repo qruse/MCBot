@@ -7,6 +7,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from app import toss
 from app.database import ping_mongo
 from app.kis import (
     ChartRange,
@@ -44,6 +45,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     finally:
         await paper_api.stop()
         await stop_market_data_scheduler()
+        await toss.close()
 
 
 app = FastAPI(

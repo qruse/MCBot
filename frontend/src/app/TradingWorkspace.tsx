@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { Summary } from "../features/dashboard/components/Summary";
-import { ProfitChart } from "../features/dashboard/components/ProfitChart";
+import { PortfolioAllocation } from "../features/dashboard/components/PortfolioAllocation";
 import { Holdings } from "../features/dashboard/components/Holdings";
 import { Readiness } from "../features/dashboard/components/Readiness";
 import { Activity } from "../features/dashboard/components/Activity";
@@ -21,22 +21,25 @@ export default function TradingWorkspace() {
   return <main className={styles.shell}>
     <header className={styles.header}>
       <Link className={styles.brand} href="/" aria-label="MCBot 홈"><span>MC</span><strong>MCBot</strong></Link>
-      <div className={styles.headerStatus}><span className={`${styles.badge} ${session.source === "demo" ? styles.waiting : ""}`}>{session.source === "toss" ? "모의매매 · 실제 시세" : "데모 · 가상 시세"}</span><span>{session.config.market === "KR" ? "국내" : "미국"}</span><time>갱신 {time(session.evaluatedAt)}</time></div>
+      <div className={styles.headerStatus}><span className={`${styles.badge} ${session.source === "demo" ? styles.waiting : ""}`}>{session.source === "toss" ? "모의매매 · 실제 시세" : "데모 · 가상 시세"}</span><span>{session.config.market === "GLOBAL" ? "국내 · 미국" : session.config.market === "KR" ? "국내" : "미국"}</span><time>갱신 {time(session.evaluatedAt)}</time></div>
     </header>
     <h1 className={styles.visuallyHidden}>운용 현황</h1>
     {paper.error && <p role="alert" className={styles.warning}>{paper.error}</p>}
     <Summary session={session} />
+    <div className={styles.strategyArea}>
+      <StrategyPanel session={session} research={research} />
+      <Candidates session={session} />
+    </div>
+    <PortfolioAllocation session={session} />
     <div className={styles.workspace}>
       <aside className={styles.controls}>
-        <ServerControls key={session.id} session={session} busy={paper.busy} command={paper.command} />
-        <StrategyPanel session={session} research={research} />
+        <ServerControls key={session.id} session={session} provider={research.providerStatus} busy={paper.busy} command={paper.command} />
         <details className={styles.fold}><summary>데이터 준비 <span>{session.ready}/{session.total}</span></summary><Readiness session={session} source={session.source} /></details>
       </aside>
-      <div className={styles.mainColumn}><ProfitChart session={session} /><Holdings session={session} /><Activity session={session} /></div>
+      <div className={styles.mainColumn}><Holdings session={session} /><Activity session={session} /></div>
     </div>
     <div className={styles.detailsStack}>
-      <Candidates session={session} />
-      <details className={styles.fold}><summary>전략 · 연구 기록 <span>{research.strategies?.length ?? 0}개 버전</span></summary><div className={styles.researchGrid}><ImprovementPanel session={session} research={research} /><StrategyLibrary session={session} research={research} /><ResearchActivity research={research} /></div></details>
+      <details className={styles.fold}><summary>이전 검토 · 코드 검증 <span>{research.strategies?.length ?? 0}개 버전</span></summary><div className={styles.researchGrid}><ResearchActivity research={research} /><StrategyLibrary session={session} research={research} /><ImprovementPanel session={session} research={research} /></div></details>
     </div>
   </main>;
 }

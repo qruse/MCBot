@@ -13,9 +13,10 @@ from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
 
+from app import toss
 from app.paper import domain
-from app.paper.contracts import Command, Proposal, Settings, standing_groups
-from app.paper.market import Collector, demo_snapshot
+from app.paper.contracts import AdaptivePortfolioPlan, Command, Proposal, Settings, standing_groups
+from app.paper.market import Collector, GlobalCollector, demo_snapshot
 from app.paper.storage import Store, encode
 from app.paper.strategies.registry import Registry, reference
 from app.paper.strategies.runtime import StrategyError
@@ -76,7 +77,9 @@ class PaperService:
     @staticmethod
     def new_bundle(settings):
         session = domain.create(settings, identity())
-        benchmark = domain.create(settings, f"{session['id']}-reference")
+        reference_settings = settings.model_copy(update={"market": "KR"}) if (
+            settings.market == "GLOBAL") else settings
+        benchmark = domain.create(reference_settings, f"{session['id']}-reference")
         benchmark["mode"] = "observer"
         benchmark["isBenchmark"] = True
         benchmark["standingGroups"] = []
@@ -94,13 +97,17 @@ class PaperService:
             bundle = self.store.current()
         s = bundle["session"]
         domain.assess(s, now_ms())
+        from app.paper.portfolio import status
+
+        s["portfolioStatus"] = status(s, now_ms())
         s["samples"] = self.store.samples(s["id"])
         s["events"] = s["events"][-200:]
         s["fills"] = s["fills"][-200:]
         s["gaps"] = s["gaps"][-200:]
         reference = bundle["benchmark"]["samples"][-1:]
         last = s["samples"][-1:]
-        paired = bool(last and reference and last[0]["timestamp"] == reference[0]["timestamp"])
+        paired = bool(s["config"]["market"] != "GLOBAL" and last and reference
+                      and last[0]["timestamp"] == reference[0]["timestamp"])
         receipts = [
             json.loads(row[0])
             for row in self.store.db.execute(
@@ -196,9 +203,12 @@ class PaperService:
                 else None,
                 "paired": paired,
                 "archives": archives,
-                "nextReviewDue": (runs[0]["started"] + 3600000) if runs else None,
+                "nextReviewDue": (now_ms() // 3600000 + 1) * 3600000,
                 "exchange": "runtime/agent_exchange",
                 "engineError": self.last_error,
+                "providerStatus": (
+                    toss.status() if s["source"] == "toss" and not session_id else None
+                ),
                 "admitted": [item["ref"] for item in self.strategies.catalog()],
                 "strategies": self.strategies.catalog(),
                 "strategyFeedback": self.strategies.feedback(),
@@ -237,9 +247,35 @@ class PaperService:
                     raise Conflict("positions_require_exit_before_new_session")
                 db.execute("UPDATE sessions SET active=0 WHERE active=1")
                 bundle = self.new_bundle(cmd.settings or Settings())
+            elif cmd.action in ("enable_global", "enable_global_preserving"):
+                from app.paper.global_account import enable
+                try:
+                    enable(s, db, now, preserve_holdings=cmd.action == "enable_global_preserving")
+                except ValueError as exc:
+                    raise Conflict(str(exc)) from exc
+                s["version"] += 1
+                domain.event(s, cmd.action, now, "command")
             else:
                 for state in (s, bundle["benchmark"]):
-                    if cmd.action == "start" and state["lifecycle"] == "idle":
+                    if state is not s and (
+                        cmd.action == "pause"
+                        and state["lifecycle"] in ("paused", "halted")
+                        or cmd.action == "resume"
+                        and state["lifecycle"] in ("running", "preparing", "halted")
+                        or cmd.action == "enable_continuous"
+                        and state["lifecycle"] == "halted"
+                    ):
+                        # A stopped reference lane cannot block primary account control.
+                        continue
+                    if cmd.action == "enable_continuous" and state["lifecycle"] in (
+                        "idle",
+                        "preparing",
+                        "running",
+                        "paused",
+                    ):
+                        state["continuousPaper"] = True
+                        state["leaseUntil"] = now + 86400000
+                    elif cmd.action == "start" and state["lifecycle"] == "idle":
                         state["lifecycle"] = "preparing"
                         state["leaseUntil"] = now + 86400000
                     elif cmd.action == "resume" and state["lifecycle"] == "paused":
@@ -334,7 +370,7 @@ class PaperService:
 
     def validate_proposal(self, proposal, now, s, db):
         try:
-            self.strategies.get(reference(proposal.playbook_id, proposal.strategy_version))
+            module = self.strategies.get(reference(proposal.playbook_id, proposal.strategy_version))
         except StrategyError:
             return "strategy_not_registered"
         if proposal.session_id != s["id"] or proposal.market != s["config"]["market"]:
@@ -369,18 +405,68 @@ class PaperService:
             return "duplicate_symbols"
         if len({e.evidence_id for e in proposal.evidence}) != len(proposal.evidence):
             return "duplicate_evidence_ids"
-        pattern = r"[A-Z0-9]{6}" if proposal.market == "KR" else r"[A-Z][A-Z0-9.\-]{0,19}"
+        global_mode = proposal.market == "GLOBAL"
+        pattern = (r"(?:KR:[A-Z0-9]{6}|US:[A-Z][A-Z0-9.\-]{0,19})" if global_mode
+                   else r"[A-Z0-9]{6}" if proposal.market == "KR"
+                   else r"[A-Z][A-Z0-9.\-]{0,19}")
         if any(not re.fullmatch(pattern, symbol) for symbol in proposal.allowed_symbols):
             return "unsupported_symbols"
         groups = proposal.candidate_groups
-        selected = [item.symbol for group in groups for item in group.candidates]
+        def instrument(item):
+            return f"{item.market}:{item.symbol}" if global_mode else item.symbol
+        selected = [instrument(item) for group in groups for item in group.candidates]
+        # New submissions follow the owner cap even through the legacy v4 adapter.
+        # Previously recorded policies and ledgers are never rewritten.
+        if len(selected) > 5:
+            return "general_candidate_budget_exceeded"
         if len(set(group.group_id for group in groups)) != len(groups):
             return "duplicate_candidate_groups"
         if len(set(selected)) != len(selected):
             return "duplicate_symbols"
         if selected != proposal.allowed_symbols:
             return "candidate_symbols_mismatch"
-        reserved = set(domain.standing_symbols(s))
+        reserved = ({instrument(item) for group in proposal.inverse_groups
+                     for item in group.candidates}
+                    if global_mode else set(domain.standing_symbols(s)))
+        if global_mode:
+            from app.paper.investment_universe import INDEX_INVERSES, inverse_issue
+            if any(instrument(item) in INDEX_INVERSES
+                   for group in groups for item in group.candidates):
+                return "general_etf_excluded"
+            for key in selected:
+                security = (s.get("latest") or {}).get("securities", {}).get(key)
+                if security and security.get("securityType") not in ("STOCK", "FOREIGN_STOCK"):
+                    return "general_etf_excluded"
+            for key in reserved:
+                security = (s.get("latest") or {}).get("securities", {}).get(key)
+                if security and inverse_issue(key, security):
+                    return "index_inverse_ineligible"
+        retirements = []
+        if proposal.portfolio:
+            weights = proposal.portfolio.target_weights
+            adaptive = isinstance(proposal.portfolio, AdaptivePortfolioPlan)
+            if adaptive:
+                retirements = proposal.portfolio.retirements
+                from app.paper.global_account import lot_key
+                retired = {instrument(item) for item in retirements}
+                held = {lot_key(s, p) if global_mode else p["symbol"] for p in s["positions"]}
+                if (
+                    len(retired) != len(retirements)
+                    or retired != held - set(selected) - reserved
+                    or any(weights.get(symbol) != 0 for symbol in retired)
+                    or any(weights.get(symbol, 0) <= 0 for symbol in selected)
+                ):
+                    return "invalid_retirements"
+            else:
+                retired = set()
+            if (
+                module["protocol_version"] != (5 if global_mode else 4 if adaptive else 3)
+                or set(weights) != set(selected) | reserved | retired | {"CASH"}
+                or (1 - weights["CASH"]) * 100 > proposal.max_exposure_percent
+            ):
+                return "invalid_portfolio_scope"
+        elif module["protocol_version"] >= 3:
+            return "portfolio_plan_required"
         if any(
             group.group_id in {g["group_id"] for g in s.get("standingGroups", [])}
             for group in groups
@@ -411,6 +497,19 @@ class PaperService:
         if proposal.playbook_id != "cash-v1" and not proposal.evidence:
             return "evidence_required"
         evidence_ids = {item.evidence_id for item in proposal.evidence}
+        if global_mode:
+            evidence_map = {e.evidence_id: str(e.source_url) for e in proposal.evidence}
+            for group in proposal.inverse_groups:
+                if group.group_id in {g.group_id for g in groups}:
+                    return "duplicate_candidate_groups"
+                for item in group.candidates:
+                    url = INDEX_INVERSES[instrument(item)]["source_url"]
+                    if not set(item.evidence_ids) <= evidence_ids or url not in {
+                        evidence_map[e] for e in item.evidence_ids if e in evidence_map
+                    }:
+                        return "index_inverse_evidence_required"
+        if any(not set(item.evidence_ids) <= evidence_ids for item in retirements):
+            return "invalid_retirement_evidence"
         if any(
             not set(item.evidence_ids) <= evidence_ids
             for group in groups
@@ -467,6 +566,9 @@ class PaperService:
                 s["candidateGroups"] = [
                     group.model_dump(mode="json") for group in proposal.candidate_groups
                 ]
+                if proposal.market == "GLOBAL":
+                    from app.paper.investment_universe import inverse_groups
+                    s["standingGroups"] = inverse_groups(proposal.inverse_groups)
                 s["candidateProposalId"] = proposal.proposal_id
                 s["candidateExpiresAt"] = proposal.expires_at
                 if proposal.experiment:
@@ -555,6 +657,8 @@ class PaperService:
             if parent != cmd.target_ref:
                 raise Conflict("rollback_requires_ancestor")
             target = self.strategies.get(cmd.target_ref)
+            if s["config"]["market"] == "GLOBAL" and target["protocol_version"] != 5:
+                raise Conflict("global_protocol_required")
             s["policy"].update(
                 playbook_id=target["strategy_id"],
                 strategy_version=target["version"],
@@ -659,7 +763,12 @@ class PaperService:
             "research_only": s["mode"] == "observer",
             "costs": "Commission only; spread, slippage, tax, FX and operation costs excluded.",
             "risk": {"position_stop_percent": 2, "holding_loss_percent": 5},
-            "data_cadence": {"quotes_seconds": 30, "history_seconds": 900},
+            "data_cadence": {
+                "quotes_seconds": toss.QUOTE_POLL_SECONDS,
+                "flat_quotes_seconds": toss.FLAT_QUOTE_POLL_SECONDS,
+                "closing_quotes_seconds": toss.CLOSING_QUOTE_POLL_SECONDS,
+                "history_seconds": 900,
+            },
             "strategy_scope": "Registered Python modules; fixed accounting and risk envelope.",
             "strategy_workflow": (
                 "tools/strategy.py scaffold -> edit code -> validate -> register -> replay "
@@ -667,15 +776,30 @@ class PaperService:
             ),
             "candidate_selection": {
                 "owner": "researcher",
-                "maximum_symbols": 6,
-                "group_size": 3,
-                "maximum_groups": 2,
+                "proposal_schema_version": 8 if s["config"]["market"] == "GLOBAL" else 7,
+                "maximum_symbols": 5,
+                "required_symbols": 5 if s["config"]["market"] == "GLOBAL" else None,
+                "minimum_group_size": 1,
+                "maximum_group_size": 3,
+                "maximum_groups": 5,
+                "minimum_standing_inverse": 2,
+                "required_index_inverses": 2 if s["config"]["market"] == "GLOBAL" else None,
+                "review": "Reselect candidates every hourly review on the hour; no forced turnover",
                 "requires": "Per-symbol rationale and evidence IDs",
                 "activation": "Provider instrument validation and complete data before entry",
                 "reference_universe": "Frozen benchmark only; not a candidate allowlist",
                 "standing_groups": s.get("standingGroups", []),
                 "standing_rules": (
-                    "Owner-pinned inverse group is outside the six-symbol quota. Do not repeat "
+                    "GLOBAL proposals select exactly five individual stocks and two daily -1x "
+                    "index inverse ETFs in inverse_groups, from the inspected index catalog. "
+                    "Exclude gold, bonds, ordinary ETFs and theme/sector inverses. All selected "
+                    "inverses require issuer evidence; their weights and CASH may be zero. "
+                    "Replacing any held stock or inverse requires an explicit zero target and "
+                    "evidence-backed retirement. Seven selected slots never force seven fills. "
+                    "Review downside opportunity, daily-reset risk and all execution gates."
+                    if s["config"]["market"] == "GLOBAL" else
+                    "Retain at least two owner-pinned inverse candidates outside the five-symbol "
+                    "general quota (currently three). Do not repeat "
                     "its symbols/group IDs. Review downside opportunity each hour. Strategy plans "
                     "also admit this group; empty researcher groups allow inverse-only review. "
                     "Entry blocks may veto pinned symbols without removing monitoring. "
@@ -704,7 +828,7 @@ class PaperService:
             if active:
                 if data is None:
                     data = (
-                        demo_snapshot(s["config"]["market"], now)
+                        self.demo_data(s["config"]["market"], now)
                         if s["source"] == "demo"
                         else self.collector.snapshot(now)
                         if self.collector and self.collector_id == s["id"]
@@ -716,18 +840,45 @@ class PaperService:
                     )
                 for key in ("session", "benchmark"):
                     state = bundle[key]
-                    if data:
-                        if data["marketOpen"]:
-                            state["leaseUntil"] = min(state["leaseUntil"], data["marketClose"])
+                    native_data = (data["markets"][state["config"]["market"]]
+                                   if data and data["market"] == "GLOBAL"
+                                   and state["config"]["market"] != "GLOBAL" else data)
+                    global_mode = state["config"]["market"] == "GLOBAL"
+                    if native_data:
+                        if native_data["marketOpen"] and not global_mode:
+                            state["lastOpenClose"] = native_data["marketClose"]
+                            if not state.get("continuousPaper"):
+                                state["leaseUntil"] = min(
+                                    state["leaseUntil"], native_data["marketClose"])
                         domain.ingest(
                             state,
-                            data,
+                            native_data,
                             now,
                             baseline=key == "benchmark",
                             strategy_runner=self.strategies.run,
                         )
                     domain.sample(state, now)
-                    if state["leaseUntil"] and now >= state["leaseUntil"]:
+                    if (
+                        state.get("continuousPaper") and not global_mode
+                        and data
+                        and state["lifecycle"] in ("preparing", "running")
+                    ):
+                        closing_deadline = state.get("lastOpenClose")
+                        if closing_deadline and now >= closing_deadline and state["positions"]:
+                            state["lifecycle"] = "paused"
+                            state["pending"] = None
+                            state["version"] += 1
+                            domain.gap(state, "closing_exit_incomplete", now)
+                        elif not data["marketOpen"] and not state["positions"]:
+                            state["leaseUntil"] = max(state["leaseUntil"] or 0, now + 86400000)
+                    if global_mode and data:
+                        from app.paper.global_account import lifecycle
+                        lifecycle(state, data, now)
+                    if (
+                        state["lifecycle"] in ("preparing", "running")
+                        and state["leaseUntil"]
+                        and now >= state["leaseUntil"]
+                    ):
                         state["lifecycle"] = "paused"
                         state["pending"] = None
                         state["version"] += 1
@@ -757,27 +908,45 @@ class PaperService:
                         self.store.save(bundle)
             await asyncio.sleep(1)
 
+    async def collect_once(self):
+        """Collect independently of entry decisions, only during an active simulation."""
+        bundle = self.store.current()
+        s = bundle["session"]
+        if s["source"] != "toss" or s["lifecycle"] not in ("preparing", "running"):
+            return
+        if self.collector_id != s["id"]:
+            self.collector = (GlobalCollector() if s["config"]["market"] == "GLOBAL"
+                              else Collector(s["config"]["market"]))
+            self.collector_id = s["id"]
+        protected = list(
+            dict.fromkeys([
+                *domain.protected_symbols(s),
+                *domain.protected_symbols(bundle["benchmark"]),
+            ])
+        )
+        candidates = domain.collection_symbols(s, now_ms())
+        reference = domain.candidate_symbols(bundle["benchmark"])
+        if s["config"]["market"] == "GLOBAL":
+            reference_market = bundle["benchmark"]["config"]["market"]
+            reference = [f"{reference_market}:{v}" for v in reference]
+            protected = list(dict.fromkeys([
+                *domain.protected_symbols(s),
+                *[f"{reference_market}:{v}"
+                  for v in domain.protected_symbols(bundle["benchmark"])]]))
+        await self.collector.collect(protected, candidates, reference)
+
     async def collect_loop(self):
         while True:
-            bundle = self.store.current()
-            s = bundle["session"]
-            if s["source"] == "toss" and s["lifecycle"] in ("preparing", "running"):
-                if self.collector_id != s["id"]:
-                    self.collector = Collector(s["config"]["market"])
-                    self.collector_id = s["id"]
-                protected = list(
-                    dict.fromkeys(
-                        [
-                            *domain.protected_symbols(s),
-                            *domain.protected_symbols(bundle["benchmark"]),
-                        ]
-                    )
-                )
-                candidates = domain.collection_symbols(s, now_ms())
-                await self.collector.collect(
-                    protected, candidates, domain.candidate_symbols(bundle["benchmark"])
-                )
+            await self.collect_once()
             await asyncio.sleep(1)
+
+    @staticmethod
+    def demo_data(market, now):
+        if market != "GLOBAL":
+            return demo_snapshot(market, now)
+        from app.paper.global_account import combine
+        markets = {m: demo_snapshot(m, now) for m in ("KR", "US")}
+        return combine(markets, now, markets["US"]["fx"])
 
     async def start(self):
         self.tasks = [

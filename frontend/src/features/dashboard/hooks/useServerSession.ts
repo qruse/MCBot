@@ -3,14 +3,25 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Session } from "../../paper/types";
 
-export type Settings = { market: "KR" | "US"; capital: string; source: "toss" | "demo"; mode: "observer" | "adaptive" };
+export type Settings = { market: "KR" | "US" | "GLOBAL"; capital: string; source: "toss" | "demo"; mode: "observer" | "adaptive" };
 export type ServerSession = Session & {
   source: Settings["source"]; mode: Settings["mode"]; entriesPaused: boolean; entryBlock: string;
+  continuousPaper?: boolean;
   policyVersion: number; leaseUntil: number | null;
-  policy: null | { proposal_id: string; playbook_id: string; strategy_version?: number; strategy_name?: string; strategy_digest?: string; expires_at: number; rationale: string; hypothesis: string; counterevidence: string; allowed_symbols: string[] };
+  portfolioStatus?: null | {
+    mode: "adaptive" | "allocation";
+    rows: { symbol: string; theme: string | null; standing: boolean; retiring: boolean; targetPercent: number; actualPercent: number | null; actualAmount: number | null; targetAmount: number | null }[];
+    nav: number | null; driftPercent: number; minimumTradeKrw: number; maxTurnoverPercent: number;
+    lastRebalancedAt: number | null; nextRebalanceAt: number; reason: string;
+  };
+  pending?: null | { theme: string; at: number; version: number; weights?: Record<string, string> }
+    | { kind: "portfolio"; at: number; version: number };
+  strategyDecision?: null | { ref: string; timestamp: number; entry_group: string | null; rotate: boolean; reason: string };
+  policy: null | { proposal_id: string; playbook_id: string; strategy_version?: number; strategy_name?: string; strategy_digest?: string; expires_at: number; rationale: string; hypothesis: string; counterevidence: string; allowed_symbols: string[]; evidence?: Evidence[] };
 };
-type Evidence = { evidence_id: string; source_url: string; publisher: string; published_at: number; claim: string };
+type Evidence = { evidence_id: string; source_url: string; publisher: string; published_at: number; retrieved_at?: number; claim: string; uncertainty?: string };
 export type Research = {
+  providerStatus?: null | { state: string; retry_after_seconds: number | null; last_failure: null | { reason: string; http_status: number | null; at: number; endpoint?: string } };
   strategies?: { ref: string; strategy_id: string; version: number; parent_ref: string; name: string; digest: string; status: string; hypothesis: string; failure_criterion: string }[];
   strategyFeedback?: { strategy_ref: string; source: string; closed_trades: number; realized_net: number; winning_trades: number; sessions: number }[];
   strategyEvaluations?: { id: string; kind: string; strategy_ref: string; created_at: number; passed?: boolean; input_count?: number; cases?: { case: string; passed: boolean; reason?: string }[]; results?: { strategy_ref: string; profit: number | null; fills: number; errors: number }[] }[];
@@ -23,8 +34,9 @@ export type Research = {
 };
 export type Snapshot = { session: ServerSession; research: Research };
 
-const moneyKeys = new Set(["capital", "baseline", "cash", "price", "rate", "close", "changePercent", "entryPrice", "entryFx", "entryFee", "entryCost", "priceKrw", "fx", "fee", "gross", "netProfit", "equity", "profit", "returnPercent", "difference", "realized_net"]);
+const moneyKeys = new Set(["capital", "baseline", "cash", "price", "rate", "close", "changePercent", "entryPrice", "entryFx", "entryFee", "entryCost", "priceKrw", "fx", "fee", "gross", "netProfit", "equity", "profit", "returnPercent", "difference", "realized_net", "targetPercent", "actualPercent", "actualAmount", "targetAmount", "nav", "driftPercent", "minimumTradeKrw", "maxTurnoverPercent"]);
 // Exact decimal strings cross the API boundary. Conversion is for display only.
+moneyKeys.add("amount"); moneyKeys.add("cashKrw"); moneyKeys.add("nativePrice");
 function displayValues(value: unknown, key = ""): unknown {
   if (typeof value === "string" && moneyKeys.has(key)) return Number(value);
   if (Array.isArray(value)) return value.map(item => displayValues(item));

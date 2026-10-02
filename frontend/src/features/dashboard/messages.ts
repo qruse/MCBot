@@ -21,8 +21,9 @@ export const labels: Record<string, string> = {
   command: "실행 제어", buy: "매수", sell: "매도", risk: "위험 감지", data: "데이터", decision: "매매 판단",
 };
 export const instrumentNames: Record<string, string> = {
+  "069500": "KODEX 200", "360750": "TIGER 미국S&P500", "148070": "KIWOOM 국고채10년", "411060": "ACE KRX금현물",
   "005930": "삼성전자", "000660": "SK하이닉스", "042700": "한미반도체", "012450": "한화에어로스페이스",
-  "079550": "LIG넥스원", "064350": "현대로템", "114800": "KODEX 인버스", "252670": "KODEX 200선물인버스2X",
+  "079550": "LIG넥스원", "064350": "현대로템", "267260": "HD현대일렉트릭", "114800": "KODEX 인버스", "252670": "KODEX 200선물인버스2X",
   "123310": "TIGER 인버스", NVDA: "엔비디아", AVGO: "브로드컴", AMD: "AMD", MSFT: "마이크로소프트",
   GOOGL: "알파벳", META: "메타", SH: "프로셰어즈 S&P500 인버스", PSQ: "프로셰어즈 나스닥100 인버스",
   SQQQ: "프로셰어즈 나스닥100 인버스 3배", "145670": "ACE 인버스", DOG: "프로셰어즈 다우30 인버스",
@@ -38,6 +39,14 @@ export const scenarioNames: Record<Scenario, string> = {
 };
 
 const translations: Record<string, string> = {
+  index_inverse_unverified: "인버스 배율 확인 대기",
+  index_inverse_ineligible: "일일 -1배 지수 인버스 검증 미통과",
+  index_inverse_not_admitted: "지수 인버스 대상 제외",
+  portfolio_rebalance: "목표 비중 조정",
+  portfolio_rotation: "종목 교체",
+  general_etf_excluded: "일반 ETF는 투자 대상에서 제외",
+  enable_continuous: "지속 모의운용 설정",
+  closing_exit_incomplete: "장 마감 청산 미완료 · 운용 정지",
   instrument_unverified: "종목 정보 확인 대기",
   instrument_ineligible: "시장·상품·거래 상태 검증 미통과",
   candidate_quote_unavailable: "유효한 시세·환율 대기",

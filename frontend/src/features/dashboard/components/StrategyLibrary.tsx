@@ -2,7 +2,7 @@ import type { Research, ServerSession } from "../hooks/useServerSession";
 import { signed, time } from "../format";
 import styles from "../dashboard.module.css";
 
-const moduleName = (id: string, name: string) => id === "theme-top3-v1" ? "테마 추세" : id === "cash-v1" ? "현금 대기" : name;
+const moduleName = (id: string, name: string) => id === "theme-top3-v1" ? "테마 추세" : id === "cash-v1" ? "신규 매수 보류" : id === "adaptive-allocation" ? "종목 · 테마 비중 조정" : id === "allocation-band" ? "자산 배분 · 비중 조정" : id === "patient-trend" ? "추세 · 자동 교체 없음" : id.startsWith("demo-roundtrip") ? "데모 매수·청산" : name;
 
 export function StrategyLibrary({ session, research }: { session: ServerSession; research: Research }) {
   const active = session.policy ? `${session.policy.playbook_id}@${session.policy.strategy_version ?? 1}` : null;

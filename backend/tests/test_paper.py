@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.paper import domain
-from app.paper.contracts import THEMES, Command, Settings, symbols
+from app.paper.contracts import THEMES, Command, Proposal, Settings, symbols
 from app.paper.market import Collector, demo_snapshot
 from app.paper.service import Conflict, PaperService
 
@@ -476,6 +476,37 @@ def test_candidate_evidence_and_identity_validation(service):
     assert not service.store.current()["session"]["candidateGroups"]
 
 
+def test_v5_five_general_candidates_and_legacy_budget(service, monkeypatch):
+    start(service)
+    p = proposal(service, schema_version=5)
+    extra = selected_groups()[0]
+    extra["candidates"] = extra["candidates"][:2]
+    p["candidate_groups"].append(extra)
+    p["allowed_symbols"].extend(c["symbol"] for c in extra["candidates"])
+    s = service.store.current()["session"]
+    pinned = domain.standing_symbols(s)
+    assert len(pinned) >= 2
+    assert service.validate_proposal(Proposal.model_validate(p), NOW, s, service.store.db) is None
+    sixth = deepcopy(extra["candidates"][0])
+    sixth["symbol"] = "005380"
+    oversized = deepcopy(p)
+    oversized["candidate_groups"][1]["candidates"].append(sixth)
+    oversized["allowed_symbols"].append(sixth["symbol"])
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="general_candidate_budget_exceeded"):
+        Proposal.model_validate(oversized)
+    oversized["schema_version"] = 4
+    assert (
+        service.validate_proposal(Proposal.model_validate(oversized), NOW, s, service.store.db)
+        == "general_candidate_budget_exceeded"
+    )
+    assert service.submit(p, p["proposal_id"], NOW)["status"] == "accepted"
+    assert domain.standing_symbols(service.store.current()["session"]) == pinned
+    monkeypatch.setattr("app.paper.service.now_ms", lambda: NOW + 16 * 60000)
+    assert service.view()["research"]["nextReviewDue"] == (NOW // 3600000 + 1) * 3600000
+
+
 def test_collector_preserves_holdings_and_collects_only_dynamic_plus_reference(monkeypatch):
     async def run():
         collector = Collector("KR")
@@ -499,6 +530,175 @@ def test_collector_preserves_holdings_and_collects_only_dynamic_plus_reference(m
         assert "000660" not in collector.securities
 
     asyncio.run(run())
+
+
+def test_collector_respects_short_provider_wait_without_extra_minute(monkeypatch):
+    from fastapi import HTTPException
+
+    async def run():
+        collector = Collector("KR")
+        calls = []
+
+        async def limited(market):
+            calls.append(market)
+            raise HTTPException(503, "Synthetic limited response")
+
+        clock = [NOW]
+        monkeypatch.setattr("app.paper.market.time.time", lambda: clock[0] / 1000)
+        monkeypatch.setattr("app.toss.calendar", limited)
+        monkeypatch.setattr("app.toss.status", lambda: {
+            "state": "cooldown", "retry_after_seconds": 7,
+        })
+        await collector.collect([], [], [])
+        assert collector.retry_at == NOW + 7000
+        clock[0] = NOW + 6000
+        await collector.collect([], [], [])
+        assert calls == ["KR"]
+        clock[0] = NOW + 7000
+        await collector.collect([], [], [])
+        assert calls == ["KR", "KR"]
+
+    asyncio.run(run())
+
+
+def test_collector_failed_history_does_not_starve_other_symbols(monkeypatch):
+    from fastapi import HTTPException
+
+    async def run():
+        collector = Collector("KR")
+        selected = ["005930", "000660", "042700"]
+        data = demo_snapshot("KR", NOW)
+        collector.securities = {s: data["securities"][s] for s in selected}
+        collector.updated.update({"calendar": NOW, "prices": NOW})
+        collector.updated.update({f"stock:{s}": NOW for s in selected})
+        collector.quote_scope = tuple(selected)
+        calls = []
+        clock = [NOW]
+
+        async def history(symbol):
+            calls.append(symbol)
+            if symbol == selected[0]:
+                raise HTTPException(502, "Synthetic single-symbol failure")
+            return {"symbol": symbol}
+
+        async def prices(symbols):
+            calls.append("prices")
+            assert symbols.split(",") == selected
+            return {"data": [], "quality": {}}
+
+        monkeypatch.setattr("app.paper.market.time.time", lambda: clock[0] / 1000)
+        monkeypatch.setattr("app.paper.market.calendar_state", lambda *args: {"marketOpen": True})
+        monkeypatch.setattr("app.toss.strategy", history)
+        monkeypatch.setattr("app.toss.prices", prices)
+        monkeypatch.setattr("app.toss.status", lambda: {"state": "ready"})
+        await collector.collect(selected[:1], selected[1:], [])
+        assert calls == [selected[0]]
+        assert selected[0] not in collector.histories
+        assert selected[0] not in collector.updated
+        clock[0] += 59000
+        await collector.collect(selected[:1], selected[1:], [])
+        assert calls == [selected[0]]  # Preserve the existing fallback wait.
+        clock[0] += 1000
+        await collector.collect(selected[:1], selected[1:], [])
+        assert calls[-1] == "prices"  # Held prices still come first on recovery.
+        for _ in range(2):
+            clock[0] += 1000
+            await collector.collect(selected[:1], selected[1:], [])
+        assert calls == [selected[0], "prices", *selected[1:]]
+        assert set(collector.histories) == set(selected[1:])
+        assert selected[0] not in collector.updated
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "held,closing,interval", [(False, False, 60), (True, False, 45), (True, True, 30)],
+)
+def test_collector_quote_cadence_batches_without_early_calls(monkeypatch, held, closing, interval):
+    async def run():
+        collector = Collector("KR")
+        selected = ["005930", "000660", "042700"]
+        data = demo_snapshot("KR", NOW)
+        collector.securities = {s: data["securities"][s] for s in selected}
+        collector.updated.update({"calendar": NOW, "prices": NOW})
+        collector.updated.update({f"stock:{s}": NOW for s in selected})
+        collector.updated.update({s: NOW for s in selected})
+        collector.quote_scope = tuple(selected)
+        calls = []
+        clock = [NOW + interval * 1000 - 1]
+
+        async def prices(symbols):
+            calls.append(symbols)
+            return {"data": [], "quality": {}}
+
+        monkeypatch.setattr("app.paper.market.time.time", lambda: clock[0] / 1000)
+        monkeypatch.setattr("app.paper.market.calendar_state", lambda *args: {
+            "marketOpen": True, "closingSoon": closing,
+        })
+        monkeypatch.setattr("app.toss.prices", prices)
+        monkeypatch.setattr("app.toss.status", lambda: {"state": "ready"})
+        holdings = selected[:1] if held else []
+        await collector.collect(holdings, selected, [])
+        assert calls == []
+        clock[0] += 1
+        await collector.collect(holdings, selected, [])
+        assert calls == [",".join(selected)]
+        clock[0] += 1000
+        await collector.collect(holdings, selected, [])
+        assert calls == [",".join(selected)]
+
+    asyncio.run(run())
+
+
+def test_dated_display_quotes_never_authorize_a_fill(monkeypatch):
+    from datetime import UTC, datetime
+
+    collector = Collector("KR")
+    cases = [("005930", "100", NOW - 300000), ("000660", "100", NOW + 1000),
+             ("042700", "-1", NOW - 1000)]
+    collector.prices = {
+        "data": [{"symbol": symbol, "lastPrice": price, "currency": "KRW",
+                  "timestamp": datetime.fromtimestamp(source / 1000, UTC).isoformat()}
+                 for symbol, price, source in cases],
+        "quality": {symbol: {"valid": False, "received_at": datetime.fromtimestamp(
+            NOW / 1000, UTC).isoformat()} for symbol, _, _ in cases},
+    }
+    data = collector.snapshot(NOW)
+    assert set(data["displayQuotes"]) == {"005930"}
+    assert data["displayQuotes"]["005930"]["price"] == "100"
+    assert data["displayQuotes"]["005930"]["sourceTime"] == NOW - 300000
+    assert data["quotes"]["005930"]["price"] is None
+    assert domain.price("005930", data, NOW) is None
+    state = domain.create(Settings(), "display-test")
+    state["latest"] = data
+    position = {"symbol": "005930", "shares": 1, "entrySourceTime": NOW - 600000}
+    state["positions"] = [position]
+    assert not domain.sell(state, position, data, NOW, "position_stop")
+    assert state["fills"] == []
+    assert state["positions"] == [position]
+
+
+@pytest.mark.parametrize("lifecycle", ["idle", "paused", "halted", "running"])
+def test_simulation_collection_is_independent_of_entries_but_stops_with_session(
+    service, monkeypatch, lifecycle,
+):
+    calls = []
+
+    class ProbeCollector:
+        def __init__(self, market):
+            assert market == "KR"
+
+        async def collect(self, *args):
+            calls.append(args)
+
+    monkeypatch.setattr("app.paper.service.Collector", ProbeCollector)
+    bundle = service.store.current()
+    s = bundle["session"]
+    s.update(source="toss", lifecycle=lifecycle, entriesPaused=True)
+    with service.store.transaction():
+        service.store.save(bundle)
+    asyncio.run(service.collect_once())
+    assert len(calls) == (1 if lifecycle == "running" else 0)
 
 
 def falling_market(market, now):

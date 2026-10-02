@@ -257,9 +257,62 @@
   .controls > :first-child { grid-row: 1; }
   .mainColumn > :nth-child(1) { grid-row: 2; }
   .mainColumn > :nth-child(2) { grid-row: 3; }
-  .mainColumn > :nth-child(3) { grid-row: 4; }
-  .controls > :nth-child(2) { grid-row: 5; }
-  .controls > :nth-child(3) { grid-row: 6; }
+  .controls > :nth-child(2) { grid-row: 4; }
+}
+
+/* Current decisions and candidate readiness stay together above the account details. */
+.strategyArea { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 20px; align-items: start; margin-bottom: 20px; }
+.strategyArea + .panel { margin-bottom: 20px; }
+.strategyOverview { border-top: 2px solid #35cba6; }
+.strategyOverviewBody { display: grid; grid-template-columns: minmax(0, 1fr) 170px; gap: 20px; padding: 0 20px 20px; }
+.strategyIntent h3 { font-size: 25px; font-weight: 600; letter-spacing: -.7px; margin: 3px 0 10px; }
+.strategyIntent > p { color: #b7c1cf; font-size: 13px; line-height: 1.6; }
+.strategyFacts { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 18px; color: #8796aa; font-size: 12px; }
+.strategyFacts b { color: #d0d9e5; font-weight: 500; margin-left: 5px; }
+.reviewSchedule { margin: 0; padding-left: 18px; border-left: 1px solid #2a3341; }
+.reviewSchedule > div + div { margin-top: 12px; }
+.reviewSchedule dt { color: #8796aa; font-size: 11px; margin-bottom: 5px; }
+.reviewSchedule dd { margin: 0; font-size: 13px; font-variant-numeric: tabular-nums; }
+.strategyDataStatus { border-top: 1px solid #292f3c; display: flex; flex-wrap: wrap; gap: 8px 14px; padding: 13px 20px; font-size: 12px; color: #95a3b5; }
+.strategyDataStatus strong { color: #d0d9e5; font-weight: 500; }
+.strategySource { border-top: 1px solid #292f3c; font-size: 12px; color: #a4b3c5; }
+.strategySource > summary { padding: 13px 20px; cursor: pointer; }
+.strategyOriginal { padding: 0 20px 20px; }
+.strategyOriginal h3 { color: #d2dbe6; font-size: 13px; margin: 16px 0 8px; }
+.strategyOriginal p { line-height: 1.7; margin-bottom: 12px; overflow-wrap: anywhere; }
+.strategyOriginal article { border-top: 1px solid #2a3341; padding-top: 14px; margin-top: 14px; }
+.strategyOriginal a, .candidateEvidence a { color: #65d3b6; text-decoration: underline; display: block; margin-bottom: 8px; }
+.strategyOriginal small { display: block; font-size: 11px; color: #8796aa; margin: 8px 0; }
+.strategyCandidates .panelHead { padding-bottom: 12px; }
+.candidateTabs { display: flex; gap: 3px; border: 1px solid #2d3848; border-radius: 7px; padding: 3px; }
+.candidateTabs button { border: 0; background: transparent; color: #92a1b4; padding: 5px 9px; border-radius: 4px; font-size: 12px; }
+.candidateTabs button[aria-pressed="true"] { background: #253c37; color: #73dfbe; }
+.candidateExpiry { padding: 0 20px 12px; color: #e0b176; font-size: 12px; }
+.candidateTable td { vertical-align: top; }
+.candidateTable td:first-child { width: 42%; white-space: normal; }
+.candidateTable td:last-child { min-width: 0; }
+.candidateTable .badge { white-space: normal; font-size: 11px; margin: 0; }
+.candidateTable td:last-child span { font-size: 11px; line-height: 1.5; }
+.candidateEvidence { color: #95a3b5; margin-top: 9px; font-size: 11px; }
+.candidateEvidence summary { cursor: pointer; }
+.candidateEvidence p { margin: 10px 0; line-height: 1.7; overflow-wrap: anywhere; }
+.candidateEvidence a { margin-top: 10px; }
+@media (max-width: 1100px) {
+  .strategyOverviewBody { grid-template-columns: minmax(0, 1fr); gap: 18px; }
+  .reviewSchedule { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; padding: 14px 0 0; border-left: 0; border-top: 1px solid #2a3341; }
+  .reviewSchedule > div + div { margin-top: 0; }
+}
+@media (max-width: 850px) { .strategyArea { grid-template-columns: minmax(0, 1fr); gap: 14px; } }
+@media (max-width: 560px) {
+  .strategyArea { margin-bottom: 16px; }
+  .strategyOverviewBody { padding: 0 18px 18px; }
+  .strategyIntent h3 { font-size: 23px; }
+  .reviewSchedule dd { font-size: 12px; }
+  .strategyDataStatus, .strategySource > summary { padding: 12px 18px; }
+  .candidateTable th, .candidateTable td { padding: 11px 12px; }
+  .candidateTable td:nth-child(2) { font-size: 11px; }
+  .candidateTable small { font-size: 10px; }
+  .candidateTabs button { padding: 5px 8px; }
 }
 @media (max-width: 560px) {
   .controlBody { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }

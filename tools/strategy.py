@@ -55,6 +55,7 @@ def main():
             "strategy_id": args.value,
             "version": args.version,
             "parent_ref": args.from_ref,
+            "protocol_version": parent.get("protocol_version", 1),
             "name": args.value,
             "hypothesis": "TODO: evidence-backed change hypothesis",
             "failure_criterion": "TODO: measurable failure and rollback criterion",

@@ -6,6 +6,7 @@ import asyncio
 import json
 import math
 import os
+import random
 import time
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
@@ -18,6 +19,10 @@ from fastapi import APIRouter, HTTPException, Query
 
 router = APIRouter(prefix="/brokers/toss", tags=["Toss Securities"])
 BASE_URL = "https://openapi.tossinvest.com"
+QUOTE_POLL_SECONDS = 45
+FLAT_QUOTE_POLL_SECONDS = 60
+CLOSING_QUOTE_POLL_SECONDS = 30
+_client: httpx.AsyncClient | None = None
 _token: str | None = None
 _expires_at = 0.0
 _retry_at = 0.0
@@ -25,14 +30,40 @@ _lock = asyncio.Lock()
 _last_call = 0.0
 _provider_wait_at = 0.0
 _rate_limit_failures = 0
+_last_failure: dict[str, Any] | None = None
+_last_response: dict[str, Any] | None = None
 _throttle_path = Path(__file__).resolve().parents[1] / ".toss-throttle.json"
 _history: dict[str, tuple[float, dict[str, Any]]] = {}
 _cache: dict[str, tuple[float, str, Any]] = {}
 
 
 def _restore_throttle() -> float:
+    global _last_failure
     try:
-        until = float(json.loads(_throttle_path.read_text(encoding="utf-8"))["until"])
+        payload = json.loads(_throttle_path.read_text(encoding="utf-8"))
+        until = float(payload["until"])
+        failure = payload.get("last_failure")
+        if (
+            isinstance(failure, dict)
+            and "http_status" in failure
+            and failure.get("reason") in (
+                "rate_limit", "rate_budget", "authentication", "http_error", "transport_error",
+            )
+            and type(failure.get("at")) is int
+            and (failure.get("http_status") is None or type(failure["http_status"]) is int)
+        ):
+            _last_failure = {key: failure[key] for key in ("reason", "http_status", "at")}
+            for key in ("endpoint", "retry_after_seconds", "reset_seconds", "remaining", "limit"):
+                value = failure.get(key)
+                if key == "endpoint":
+                    if value in (
+                        "/oauth2/token", "/api/v1/prices", "/api/v1/stocks",
+                        "/api/v1/candles", "/api/v1/exchange-rate",
+                        "/api/v1/market-calendar/KR", "/api/v1/market-calendar/US",
+                    ):
+                        _last_failure[key] = value
+                elif isinstance(value, (int, float)) and math.isfinite(value) and value >= 0:
+                    _last_failure[key] = value
         return time.monotonic() + max(0, until - time.time()) if math.isfinite(until) else 0
     except (OSError, ValueError, TypeError, KeyError):
         return 0
@@ -42,11 +73,20 @@ def _save_throttle() -> None:
     """Persist no secrets, only the provider cooldown; restart must not bypass a 429."""
     until = time.time() + max(0, _retry_at - time.monotonic())
     temporary = _throttle_path.with_suffix(".tmp")
-    temporary.write_text(json.dumps({"until": until}), encoding="utf-8")
+    temporary.write_text(
+        json.dumps({"until": until, "last_failure": _last_failure}), encoding="utf-8",
+    )
     temporary.replace(_throttle_path)
 
 
 _retry_at = _restore_throttle()
+
+
+def _record_failure(reason: str, http_status: int | None = None) -> None:
+    global _last_failure
+    _last_failure = {
+        "reason": reason, "http_status": http_status, "at": int(time.time() * 1000),
+    }
 
 
 def _positive_decimal(value: Any) -> bool:
@@ -144,8 +184,44 @@ def configured() -> bool:
     return all(os.getenv(key, "").strip() for key in ("TOSS_CLIENT_ID", "TOSS_CLIENT_SECRET"))
 
 
-async def _json(response: httpx.Response) -> dict[str, Any]:
-    global _retry_at, _provider_wait_at, _rate_limit_failures
+def _shared_client() -> httpx.AsyncClient:
+    global _client
+    if _client is None or _client.is_closed:
+        _client = httpx.AsyncClient(
+            timeout=12,
+            limits=httpx.Limits(
+                max_connections=1, max_keepalive_connections=1, keepalive_expiry=90,
+            ),
+        )
+    return _client
+
+
+async def close() -> None:
+    global _client
+    async with _lock:
+        if _client is not None:
+            await _client.aclose()
+            _client = None
+
+
+async def _json(response: httpx.Response, endpoint: str | None = None) -> dict[str, Any]:
+    global _retry_at, _provider_wait_at, _rate_limit_failures, _last_response
+    metadata: dict[str, Any] = {
+        "http_status": response.status_code, "at": int(time.time() * 1000),
+    }
+    if endpoint:
+        metadata["endpoint"] = endpoint
+    for header, key in (
+        ("Retry-After", "retry_after_seconds"), ("X-RateLimit-Reset", "reset_seconds"),
+        ("X-RateLimit-Remaining", "remaining"), ("X-RateLimit-Limit", "limit"),
+    ):
+        try:
+            value = float(response.headers[header])
+            if math.isfinite(value) and value >= 0:
+                metadata[key] = value
+        except (KeyError, ValueError):
+            pass
+    _last_response = metadata
     try:
         remaining = float(response.headers.get("X-RateLimit-Remaining", "inf"))
         reset = float(response.headers.get("X-RateLimit-Reset", "0"))
@@ -153,22 +229,28 @@ async def _json(response: httpx.Response) -> dict[str, Any]:
             _provider_wait_at = max(_provider_wait_at, time.monotonic() + reset)
             if reset > 30:
                 _retry_at = max(_retry_at, _provider_wait_at)
+                _record_failure("rate_budget")
+                _last_failure.update(metadata)
                 _save_throttle()
     except ValueError:
         pass
     if response.status_code >= 400:
+        _record_failure(
+            "rate_limit" if response.status_code == 429
+            else "authentication" if response.status_code in (401, 403) else "http_error",
+            response.status_code,
+        )
+        _last_failure.update(metadata)
         if response.status_code in (401, 403):
             _retry_at = float("inf")
         elif response.status_code == 429:
-            try:
-                retry_seconds = float(response.headers.get("Retry-After", "300"))
-            except ValueError:
-                retry_seconds = 300
-            if not math.isfinite(retry_seconds):
-                retry_seconds = 300
+            retry_seconds = metadata.get(
+                "retry_after_seconds", metadata.get("reset_seconds", 300)
+            )
             _rate_limit_failures += 1
-            backoff = min(3600, 300 * 2 ** min(_rate_limit_failures - 1, 4))
-            _retry_at = max(_retry_at, time.monotonic() + max(backoff, retry_seconds))
+            backoff = min(300, 6.1 * 2 ** min(_rate_limit_failures - 1, 6))
+            wait = max(backoff, retry_seconds, metadata.get("reset_seconds", 0))
+            _retry_at = max(_retry_at, time.monotonic() + wait + random.uniform(0, 1))
             _save_throttle()
         messages = {
             401: "Toss authentication failed. Check the local credentials.",
@@ -184,6 +266,8 @@ async def _json(response: httpx.Response) -> dict[str, Any]:
         payload = response.json()
         if not isinstance(payload, dict):
             raise ValueError
+        if endpoint != "/oauth2/token":
+            _rate_limit_failures = 0
         return payload
     except ValueError as error:
         raise HTTPException(502, "Toss returned an invalid response.") from error
@@ -217,50 +301,57 @@ async def _request(
             )
             raise HTTPException(503, message, headers=_failure_headers())
         try:
-            async with httpx.AsyncClient(timeout=12) as client:
-                if not _token or time.monotonic() >= _expires_at:
-                    await _pace()
-                    payload = await _json(
-                        await client.post(
-                            f"{BASE_URL}/oauth2/token",
-                            data={
-                                "grant_type": "client_credentials",
-                                "client_id": os.environ["TOSS_CLIENT_ID"],
-                                "client_secret": os.environ["TOSS_CLIENT_SECRET"],
-                            },
-                        )
-                    )
-                    if not payload.get("access_token"):
-                        raise HTTPException(502, "Toss did not return an access token.")
-                    _token = payload["access_token"]
-                    _expires_at = time.monotonic() + max(0, int(payload["expires_in"]) - 60)
-                if time.monotonic() < _retry_at:
-                    raise HTTPException(503, "Toss calls paused during cooldown. Retry later.",
-                                        headers=_failure_headers())
+            client = _shared_client()
+            if not _token or time.monotonic() >= _expires_at:
                 await _pace()
-                response = await client.get(
-                    f"{BASE_URL}{path}",
-                    params=params,
-                    headers={"Authorization": f"Bearer {_token}"},
+                payload = await _json(
+                    await client.post(
+                        f"{BASE_URL}/oauth2/token",
+                        data={
+                            "grant_type": "client_credentials",
+                            "client_id": os.environ["TOSS_CLIENT_ID"],
+                            "client_secret": os.environ["TOSS_CLIENT_SECRET"],
+                        },
+                    ),
+                    "/oauth2/token",
                 )
-                if response.status_code == 401:
-                    _token = None
-                payload = await _json(response)
-                if "result" not in payload:
-                    raise HTTPException(502, "Toss response is missing result data.")
-                if ttl:
-                    _cache[key] = (
-                        time.monotonic(),
-                        datetime.now(UTC).isoformat(),
-                        payload["result"],
-                    )
-                return payload["result"]
+                if not payload.get("access_token"):
+                    raise HTTPException(502, "Toss did not return an access token.")
+                _token = payload["access_token"]
+                _expires_at = time.monotonic() + max(0, int(payload["expires_in"]) - 60)
+            if time.monotonic() < _retry_at:
+                raise HTTPException(503, "Toss calls paused during cooldown. Retry later.",
+                                    headers=_failure_headers())
+            await _pace()
+            response = await client.get(
+                f"{BASE_URL}{path}",
+                params=params,
+                headers={"Authorization": f"Bearer {_token}"},
+            )
+            if response.status_code == 401:
+                _token = None
+            payload = await _json(response, path)
+            if "result" not in payload:
+                raise HTTPException(502, "Toss response is missing result data.")
+            if ttl:
+                _cache[key] = (
+                    time.monotonic(),
+                    datetime.now(UTC).isoformat(),
+                    payload["result"],
+                )
+            return payload["result"]
         except httpx.HTTPError as error:
             _retry_at = max(_retry_at, time.monotonic() + 60)
+            _record_failure("transport_error")
             raise HTTPException(502, "Unable to reach Toss Securities.",
                                 headers=_failure_headers()) from error
         except HTTPException as error:
-            _retry_at = max(_retry_at, time.monotonic() + 60)
+            if (
+                error.status_code != 503
+                or not _last_failure
+                or _last_failure["reason"] not in ("rate_limit", "rate_budget")
+            ):
+                _retry_at = max(_retry_at, time.monotonic() + 60)
             error.headers = {**(error.headers or {}), **_failure_headers()}
             raise
 
@@ -269,7 +360,7 @@ def _failure_headers() -> dict[str, str]:
     if _retry_at == float("inf"):
         return {"X-Toss-State": "authentication_error"}
     return {"X-Toss-State": "cooldown",
-            "Retry-After": str(max(60, int(_retry_at - time.monotonic()) + 1))}
+            "Retry-After": str(max(1, math.ceil(_retry_at - time.monotonic())))}
 
 
 @router.get("/status")
@@ -278,12 +369,16 @@ def status() -> dict[str, Any]:
         "configured": configured(),
         "execution": "local-paper",
         "provider": "Toss Securities",
-        "quote_poll_seconds": 30,
+        "quote_poll_seconds": QUOTE_POLL_SECONDS,
+        "flat_quote_poll_seconds": FLAT_QUOTE_POLL_SECONDS,
+        "closing_quote_poll_seconds": CLOSING_QUOTE_POLL_SECONDS,
         "strategy_refresh_seconds": 900,
         "state": ("authentication_error" if not configured() or _retry_at == float("inf")
                   else "cooldown" if time.monotonic() < _retry_at else "ready"),
         "retry_after_seconds": (None if _retry_at == float("inf")
                                 else max(0, int(_retry_at - time.monotonic()) + 1)),
+        "last_failure": _last_failure,
+        "last_response": _last_response,
     }
 
 
@@ -359,6 +454,21 @@ async def prices(symbols: str = Query(pattern=r"^[A-Za-z0-9.,\-]+$", max_length=
         "synced_at": synced_at,
         "provider_status": status(),
     }
+
+
+async def global_fx():
+    """Read public reference FX through the existing cache and pacing; no account access."""
+    params = {"baseCurrency": "USD", "quoteCurrency": "KRW"}
+    result = await _request("/api/v1/exchange-rate", params, ttl=300)
+    if not isinstance(result, dict) or not _positive_decimal(result.get("rate")):
+        raise HTTPException(502, "Invalid reference FX data.")
+    start, end = _timestamp(result.get("validFrom")), _timestamp(result.get("validUntil"))
+    if not start or not end or not start <= datetime.now(UTC) <= end:
+        raise HTTPException(502, "Expired reference FX data.")
+    received = _cache[_cache_key("/api/v1/exchange-rate", params)][1]
+    return {"rate": result["rate"], "validFrom": int(start.timestamp() * 1000),
+            "validUntil": int(end.timestamp() * 1000),
+            "receivedAt": int(_timestamp(received).timestamp() * 1000)}
 
 
 @router.get("/strategy/{symbol}")

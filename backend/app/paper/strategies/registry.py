@@ -7,24 +7,34 @@ from decimal import Decimal
 
 from app.paper.storage import encode
 from app.paper.strategies.contracts import Draft
-from app.paper.strategies.runtime import BUILTINS, StrategyError, digest, execute
+from app.paper.strategies.runtime import BUILTINS, StrategyError, digest, execute, prepare_context
 
-CHECK_VERSION = 1
+CHECK_VERSION = 5
 
 
 def reference(strategy_id, version=1):
     return f"{strategy_id}@{version}"
 
 
+def draft_payload(draft):
+    payload = draft.model_dump(mode="json")
+    # Preserve exact v1 payload identity for pre-upgrade idempotent registrations.
+    if payload["protocol_version"] == 1:
+        payload.pop("protocol_version")
+    return payload
+
+
 def fingerprint(draft):
-    return digest(encode(draft.model_dump(mode="json")))
+    return digest(encode(draft_payload(draft)))
 
 
-def scenarios():
+def scenarios(protocol_version=1):
     from app.paper.contracts import THEMES, standing_groups
     from app.paper.market import demo_snapshot
 
     now = 1790730000000
+    if protocol_version == 5:
+        return global_scenarios(now)
     cases = []
     for market in ("KR", "US"):
         data = demo_snapshot(market, now)
@@ -48,7 +58,44 @@ def scenarios():
             "candidate_ready": list(data["quotes"]),
             "minute_ready": list(data["quotes"]),
         }
+        if protocol_version >= 3:
+            members = sorted({s for group in groups.values() for s in group})
+            # Deterministic exact-sum targets for all monitored fixture instruments and cash.
+            weights = {s: "0.1" for s in members}
+            weights["CASH"] = str(Decimal(1) - Decimal("0.1") * len(members))
+            context["portfolio"] = {"target_weights": weights}
+            context["portfolio_runtime"] = {"last_slot": None, "risk_blocks": {}}
+            if protocol_version == 4:
+                context["portfolio"].update(mode="adaptive", retirements=[])
         cases.append((f"{market}_entry", deepcopy(context)))
+        if protocol_version >= 2:
+            members = next(iter(groups.values()))
+            for size in (1, 2):
+                short = deepcopy(context)
+                short["groups"] = {f"{market.lower()}-semis": members[:size]}
+                if protocol_version >= 3:
+                    short["portfolio"]["target_weights"] = {
+                        **{s: "0.1" for s in members[:size]},
+                        "CASH": str(Decimal(1) - Decimal("0.1") * size),
+                    }
+                cases.append((f"{market}_{size}_member_entry", short))
+        if protocol_version == 4:
+            zero_cash = deepcopy(context)
+            selected = next(iter(groups.values()))[0]
+            zero_cash["groups"] = {"single-stock": [selected]}
+            zero_cash["portfolio"]["target_weights"] = {selected: "1", "CASH": "0"}
+            cases.append((f"{market}_zero_cash_entry", zero_cash))
+            rotation = deepcopy(context)
+            retired = next(iter(rotation["portfolio"]["target_weights"]))
+            rotation["groups"] = {
+                name: [s for s in group if s != retired]
+                for name, group in groups.items()
+                if any(s != retired for s in group)
+            }
+            rotation["portfolio"]["target_weights"][retired] = "0"
+            rotation["portfolio"]["target_weights"]["CASH"] = "0.4"
+            rotation["portfolio"]["retirements"] = [{"symbol": retired}]
+            cases.append((f"{market}_retirement_entry", rotation))
         symbol = next(iter(data["quotes"]))
         context.update(
             can_enter=False,
@@ -78,12 +125,58 @@ def scenarios():
         cases.append((f"{market}_missing_data", deepcopy(context)))
         data["marketOpen"] = False
         cases.append((f"{market}_closed", deepcopy(context)))
-    return cases
+    return [(name, prepare_context(context, protocol_version)) for name, context in cases]
+
+
+def global_scenarios(now):
+    from app.paper.global_account import combine
+    from app.paper.market import demo_snapshot
+    markets = {m: demo_snapshot(m, now) for m in ("KR", "US")}
+    data = combine(markets, now, markets["US"]["fx"])
+    context = {
+        "protocol_version": 5, "now": now, "data": data,
+        "groups": {"kr": ["KR:005930"], "us": ["US:NVDA"]}, "positions": [],
+        "cash": "10000000", "capital": "10000000", "cash_balances": {"KRW": "10000000",
+                                                                                  "USD": "0"},
+        "active_symbols": [], "can_enter": True,
+        "candidate_ready": list(data["quotes"]), "minute_ready": list(data["quotes"]),
+        "active_candidates": ["KR:005930", "US:NVDA"],
+        "portfolio": {"mode": "adaptive", "retirements": [], "target_weights": {
+            "KR:005930": "0.3", "US:NVDA": "0.3", "CASH": "0.4"}},
+        "portfolio_runtime": {"last_slot": None, "risk_blocks": {}},
+    }
+    cases = [("GLOBAL_both_entry", deepcopy(context))]
+    for market in ("KR", "US"):
+        value = deepcopy(context)
+        closed = "US" if market == "KR" else "KR"
+        value["data"]["markets"][closed]["marketOpen"] = False
+        value["active_candidates"] = [v for v in context["active_candidates"]
+                                      if v.startswith(market + ":")]
+        cases.append((f"GLOBAL_{market}_open_entry", value))
+    zero = deepcopy(context)
+    zero["portfolio"]["target_weights"].update({"KR:005930": "0.5", "US:NVDA": "0.5",
+                                                "CASH": "0"})
+    cases.append(("GLOBAL_zero_cash_entry", zero))
+    retirement = deepcopy(context)
+    retirement["portfolio"]["target_weights"]["KR:000660"] = "0"
+    retirement["portfolio"]["retirements"] = [{"market": "KR", "symbol": "000660"}]
+    cases.append(("GLOBAL_retirement_entry", retirement))
+    missing = deepcopy(context)
+    missing["candidate_ready"] = []
+    missing["data"]["fx"] = None
+    cases.append(("GLOBAL_missing_entry", missing))
+    context["can_enter"] = False
+    cases.append(("GLOBAL_held", deepcopy(context)))
+    context["data"]["marketOpen"] = False
+    for item in context["data"]["markets"].values():
+        item["marketOpen"] = False
+    cases.append(("GLOBAL_closed", context))
+    return [(name, prepare_context(c, 5)) for name, c in cases]
 
 
 def check_draft(draft: Draft):
     results = []
-    for name, context in scenarios():
+    for name, context in scenarios(draft.protocol_version):
         try:
             output = execute(draft.source, context)
             if name.endswith("_entry") and execute(draft.source, context) != output:
@@ -128,7 +221,7 @@ class Registry:
             )
             store.db.execute(
                 "INSERT OR IGNORE INTO strategy_versions VALUES(?,?,?,0)",
-                (reference(name), encode(draft.model_dump(mode="json")), digest(source)),
+                (reference(name), encode(draft_payload(draft)), digest(source)),
             )
 
     def get(self, ref):
@@ -138,6 +231,7 @@ class Registry:
         if not row:
             raise StrategyError("strategy_not_registered")
         return {
+            "protocol_version": 1,
             **json.loads(row["payload"]),
             "ref": ref,
             "digest": row["digest"],
@@ -150,7 +244,7 @@ class Registry:
             expected_digest and item["digest"] != expected_digest
         ):
             raise StrategyError("strategy_digest_mismatch")
-        return execute(item["source"], context)
+        return execute(item["source"], prepare_context(context, item["protocol_version"]))
 
     def record(self, report, now):
         report = {**report, "created_at": now}
@@ -167,7 +261,7 @@ class Registry:
             existing = db.execute(
                 "SELECT payload FROM strategy_versions WHERE ref=?", (ref,)
             ).fetchone()
-            payload = encode(draft.model_dump(mode="json"))
+            payload = encode(draft_payload(draft))
             if existing:
                 if existing[0] != payload:
                     raise StrategyError("strategy_version_immutable")
@@ -214,6 +308,8 @@ class Registry:
         totals = {}
         for row in self.store.db.execute("SELECT payload FROM sessions"):
             state = json.loads(row[0])["session"]
+            open_ids = {p.get("entryId") for p in state["positions"]}
+            trade_results = {}
             for fill in state["fills"]:
                 if fill["side"] != "sell":
                     continue
@@ -231,10 +327,14 @@ class Registry:
                     },
                 )
                 profit = Decimal(fill["netProfit"])
-                entry["closed_trades"] += 1
                 entry["realized_net"] += profit
-                entry["winning_trades"] += profit > 0
                 entry["sessions"].add(state["id"])
+                trade_key = (key, fill.get("entryId", fill["id"]))
+                trade_results[trade_key] = trade_results.get(trade_key, Decimal(0)) + profit
+            for (key, entry_id), profit in trade_results.items():
+                if entry_id not in open_ids:
+                    totals[key]["closed_trades"] += 1
+                    totals[key]["winning_trades"] += profit > 0
         return [
             {
                 **entry,

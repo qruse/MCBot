@@ -20,6 +20,11 @@ service: PaperService | None = None
 
 
 def local_access(request: Request):
+    # Tunnel requests that passed the remote token gate skip the local-only checks.
+    if getattr(request.state, "remote_authenticated", False):
+        if request.method != "GET" and request.headers.get("X-MCBot-Command") != "local-paper":
+            raise HTTPException(403, "command_header_required")
+        return
     origin = request.headers.get("origin")
     if request.url.hostname not in ("localhost", "127.0.0.1", "::1", "testserver"):
         raise HTTPException(403, "local_access_only")

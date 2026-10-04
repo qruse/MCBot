@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Session } from "../../paper/types";
+import { apiBase, apiHeaders, useConnectionKey } from "../../backend/connection";
 
 export type Settings = { market: "KR" | "US" | "GLOBAL"; capital: string; source: "toss" | "demo"; mode: "observer" | "adaptive" };
 export type ServerSession = Session & {
@@ -44,10 +45,9 @@ function displayValues(value: unknown, key = ""): unknown {
   return value;
 }
 
-const base = () => (process.env.NEXT_PUBLIC_API_BASE_URL ?? (typeof window !== "undefined" && ["3000", "3001"].includes(window.location.port) ? "http://127.0.0.1:8000" : "/api")).replace(/\/$/, "");
 export async function paperRequest(path: string, body?: unknown): Promise<unknown> {
-  const response = await fetch(`${base()}/paper/${path}`, { cache: "no-store", signal: AbortSignal.timeout(10000),
-    method: body ? "POST" : "GET", headers: body ? { "Content-Type": "application/json", "X-MCBot-Command": "local-paper" } : {},
+  const response = await fetch(`${apiBase()}/paper/${path}`, { cache: "no-store", signal: AbortSignal.timeout(10000),
+    method: body ? "POST" : "GET", headers: { ...apiHeaders(), ...(body ? { "Content-Type": "application/json", "X-MCBot-Command": "local-paper" } : {}) },
     body: body ? JSON.stringify(body) : undefined });
   const result = await response.json();
   if (!response.ok) throw new Error(result.detail ?? "backend_unavailable");
@@ -59,19 +59,26 @@ export function useServerSession() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const inFlight = useRef(false);
+  const connection = useConnectionKey();
   const refresh = useCallback(async () => {
     if (inFlight.current) return;
     inFlight.current = true;
     try { setSnapshot(await paperRequest("snapshot") as Snapshot); setError(null); }
-    catch { setError("서버에 연결할 수 없습니다. 마지막으로 받은 정보를 표시합니다."); }
+    catch (e) {
+      const code = e instanceof Error ? e.message : "";
+      setError(code === "remote_token_required" ? "백엔드 접속 토큰이 맞지 않습니다. 터널 실행 시 출력된 링크로 다시 열어 주세요."
+        : code === "remote_access_disabled" ? "백엔드에 원격 접속 토큰이 설정되지 않았습니다. 터널 실행 스크립트로 백엔드를 시작해 주세요."
+        : "서버에 연결할 수 없습니다. 마지막으로 받은 정보를 표시합니다.");
+    }
     finally { inFlight.current = false; }
   }, []);
+  // Restart polling immediately when the saved backend address or token changes.
   useEffect(() => {
     const initial = window.setTimeout(() => { void refresh(); }, 0);
     let count = 0;
     const timer = window.setInterval(() => { if (!document.hidden || ++count % 6 === 0) void refresh(); }, 5000);
     return () => { window.clearTimeout(initial); window.clearInterval(timer); };
-  }, [refresh]);
+  }, [refresh, connection]);
   async function command(action: string, settings?: Settings) {
     if (!snapshot || busy) return;
     setBusy(true);

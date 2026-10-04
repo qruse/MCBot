@@ -1,0 +1,11 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "mcbot",
+  "compatibility_date": "2026-09-30",
+  "assets": {
+    "directory": "./frontend/out"
+  },
+  "build": {
+    "command": "npm ci --prefix frontend && CLOUDFLARE_BUILD=1 npm run build --prefix frontend"
+  }
+}

@@ -327,3 +327,9 @@
   .resetArea { margin-top: 0; }
   .resetArea > button:disabled { display: none; }
 }
+.backendConnection { position: relative; }
+.backendConnection > summary { cursor: pointer; list-style: none; }
+.backendConnection > summary::-webkit-details-marker { display: none; }
+.backendConnection form { position: absolute; right: 0; top: calc(100% + 8px); z-index: 20; display: grid; gap: 10px; width: min(340px, calc(100vw - 40px)); padding: 16px; border: 1px solid #2a303d; border-radius: 10px; background: #141922; box-shadow: 0 12px 32px rgba(0, 0, 0, .45); }
+.backendConnection label { display: grid; gap: 6px; color: #a7afbd; font-size: 12px; }
+.backendConnection small { color: #7f8a9b; font-size: 11px; line-height: 1.6; }

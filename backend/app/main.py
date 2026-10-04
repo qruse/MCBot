@@ -23,6 +23,7 @@ from app.market_data import (
     stop_market_data_scheduler,
 )
 from app.paper import api as paper_api
+from app.remote_access import remote_access_gate
 from app.toss import router as toss_router
 from app.universe import ThemeUniverseResponse, get_theme_universe
 
@@ -56,16 +57,29 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+LOCAL_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:3001",
+    "http://127.0.0.1:3001",
+    "http://localhost:8080",
+    "http://127.0.0.1:8080",
+]
+
+# Comma-separated extra origins, e.g. a custom domain for the deployed dashboard.
+EXTRA_ORIGINS = [
+    origin.strip() for origin in os.getenv("FRONTEND_ORIGINS", "").split(",") if origin.strip()
+]
+
+# The Cloudflare Workers dashboard (mcbot.<account>.workers.dev) and its preview URLs.
+WORKERS_ORIGIN_REGEX = r"^https://([a-z0-9-]+-)?mcbot\.[a-z0-9-]+\.workers\.dev$"
+
+# Registered before CORS so CORS stays outermost and also decorates 401/403 responses.
+app.middleware("http")(remote_access_gate)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:3001",
-        "http://127.0.0.1:3001",
-        "http://localhost:8080",
-        "http://127.0.0.1:8080",
-    ],
+    allow_origins=LOCAL_ORIGINS + EXTRA_ORIGINS,
+    allow_origin_regex=WORKERS_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

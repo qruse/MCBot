@@ -137,6 +137,29 @@ use Wrangler's custom build command. For local CLI deployments from the reposito
 Regular `npm run build` and Docker builds still produce the Next.js standalone server. No
 Cloudflare API token needs to be committed to this repository.
 
+## Local Backend + Cloudflare Frontend
+
+The dashboard on Cloudflare can talk to a backend running on your own PC through a
+Cloudflare quick tunnel (free, no account, no port forwarding). The tunnel URL changes on
+every run.
+
+Requirements: `backend/.venv` set up (see Backend above) and `cloudflared` on `PATH` or at
+`%USERPROFILE%\tools\cloudflared.exe`.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\start-local-backend.ps1 -DashboardUrl https://mcbot.YOUR_SUBDOMAIN.workers.dev
+```
+
+The script prints the tunnel URL and a dashboard link ending in `?api=<tunnel URL>`. Opening
+that link saves the backend URL in the browser; the sidebar **Backend** panel shows the
+connection status, and you can also paste a new tunnel URL there. Press Ctrl+C to stop.
+
+CORS allows `mcbot.*.workers.dev` (and its preview URLs) plus localhost. Add other dashboard
+origins with the `FRONTEND_ORIGINS` environment variable (comma-separated).
+
+Quick tunnel URLs are public and unauthenticated. Do not expose account or order endpoints
+this way without adding authentication first.
+
 ## Safety Notes
 
 Automated trading can create real financial risk. Live trading features should be added only after

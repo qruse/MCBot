@@ -19,7 +19,9 @@ automated trading assistant.
 - `frontend/Dockerfile`: production Next.js standalone container image
 - `frontend/src/app/page.tsx`: frontend test page
 - `frontend/src/app/StockDashboard.tsx`: interactive stock dashboard prototype
+- `frontend/src/app/BackendStatus.tsx`: sidebar backend URL input and health status
 - `frontend/src/app/page.module.css`: test page styles
+- `scripts/start-local-backend.ps1`: runs the backend on this PC behind a Cloudflare quick tunnel
 - `frontend/src/app/layout.tsx`: Next.js metadata and root layout
 - `nginx/nginx.conf`: reverse proxy for frontend and `/api/*`
 - `compose.yaml`: local multi-container stack

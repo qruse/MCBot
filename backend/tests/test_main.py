@@ -21,3 +21,16 @@ def test_read_health() -> None:
         "service": "mcbot-backend",
         "version": "0.1.0",
     }
+
+
+def test_cors_allows_workers_dashboard() -> None:
+    origin = "https://mcbot.qruse.workers.dev"
+    response = client.get("/health", headers={"Origin": origin})
+
+    assert response.headers["access-control-allow-origin"] == origin
+
+
+def test_cors_rejects_other_workers_sites() -> None:
+    response = client.get("/health", headers={"Origin": "https://evil.qruse.workers.dev"})
+
+    assert "access-control-allow-origin" not in response.headers

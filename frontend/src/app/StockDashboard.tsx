@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 
+import BackendStatus from "./BackendStatus";
 import styles from "./page.module.css";
 
 type RangeKey = "LIVE" | "1D" | "1W" | "1M" | "1Y" | "5Y" | "ALL";
@@ -529,6 +530,7 @@ export default function StockDashboard() {
             <strong>{t.paperOnly}</strong>
           </div>
         </div>
+        <BackendStatus language={language} />
       </aside>
 
       <section className={styles.mainStage}>
